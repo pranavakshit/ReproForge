@@ -2,7 +2,7 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![Architecture](https://img.shields.io/badge/architecture-modular%20monolith-emerald.svg)](architecture.puml)
-[![Test Suite](https://img.shields.io/badge/tests-pytest%20passing-brightgreen.svg)](tests/)
+[![Test Suite](https://img.shields.io/badge/tests-68%20passed-brightgreen.svg)](tests/)
 [![License: Academic](https://img.shields.io/badge/License-Academic%20Evaluation-lightgrey.svg)](LICENSE)
 
 > An automated system for detecting, classifying, and diagnosing non-deterministic software builds across independent build environments.
@@ -25,9 +25,10 @@ Rather than merely displaying binary diffs, ReproForge correlates observed envir
 - **Dual-Mode Comparison Layer**:
   - **Mode A (Strict Comparison)**: Cryptographic bit-for-bit identity check ($S_{exact}$).
   - **Mode B (Normalized Comparison)**: Semantic comparison after deterministic normalization of timestamps, file modes, UID/GID, and entry ordering ($S_{norm}$).
-- **Rule-Based Diagnostic Correlation Engine**: 11-category classification matrix identifying root causes (timestamp drift, toolchain variation, environment leakage, unpinned dependencies) with explicit confidence scoring (`HIGH`, `MEDIUM`, `LOW`, `INCONCLUSIVE`).
-- **Composite Reproducibility Index (CRI)**: Transparent mathematical scoring combining exact equality, normalized equivalence, file content agreement, and metadata consistency.
-- **Isolated Build Execution**: Ephemeral containerized sandbox execution enforcing timeout and resource constraints.
+- **Rule-Based Diagnostic Correlation Engine**: 11-category classification matrix identifying root causes (timestamp drift, toolchain variation, environment leakage, unpinned dependencies) with explicit confidence scoring (`HIGH`, `MEDIUM`, `LOW`, `INCONCLUSIVE`) and epistemic status (`OBSERVED`, `INFERRED`, `HYPOTHESIS`, `EXPERIMENTALLY_VALIDATED`).
+- **Reproducibility Assessment & CRI**: Transparent primary multi-dimensional vector $\mathbf{R} = \langle S_{exact}, S_{norm}, R_{content}, R_{meta}, S_{env}, N_{unexplained} \rangle$, categorical verdicts (`BIT_FOR_BIT_REPRODUCIBLE`, `NORMALIZED_REPRODUCIBLE`, `PARTIALLY_REPRODUCIBLE`, `NON_REPRODUCIBLE`, `INCONCLUSIVE`), and secondary Composite Reproducibility Index (CRI).
+- **Shared Application Services & Durable Persistence**: Unified service layer (`BuildService`, `ComparisonService`, `DiagnosticService`, `FingerprintService`, `RepositoryService`) with async SQLite WAL persistence (`PRAGMA journal_mode=WAL`, `busy_timeout=5000`), crash resilience, and post-crash orphan reconciliation.
+- **Standalone CLI & Native Desktop Integration**: Autonomous CLI application with seamless transition to a native Rust desktop GUI (Slint/Iced).
 
 ---
 
@@ -36,17 +37,15 @@ Rather than merely displaying binary diffs, ReproForge correlates observed envir
 The project architecture is structured into clear, decoupled layers:
 
 ```
-[Presentation Layer]     React/TypeScript Dashboard & Headless CLI
+[Presentation Layer]     Native Rust Desktop UI (Slint / Iced) & Standalone CLI
         │
-[API Layer]              FastAPI REST Service & OpenAPI Controllers
+[Shared Service Layer]   BuildService, ComparisonService, DiagnosticService, FingerprintService
         │
-[Orchestration Layer]    Build Scheduler & Environment Profile Manager
+[Execution Layer]        Isolated Docker/BuildKit & Local Sandbox Runners, WorkspaceManager
         │
-[Execution Layer]        Isolated Docker/BuildKit Sandbox Runners
+[Analysis Layer]         Dual-Mode Normalizer, DiffEngine, 11 Diagnostic Rules, CRI Scorer
         │
-[Analysis Layer]         Fingerprinter, Normalizer, DiffEngine, DiagnosticEngine, CRI Scorer
-        │
-[Persistence Layer]      PostgreSQL / Async SQLite with Alembic Migrations
+[Persistence Layer]      Async Repositories with Crash Reconciler & SQLite WAL Database
 ```
 
 See [architecture.puml](architecture.puml) for the complete PlantUML component diagram.
@@ -101,10 +100,14 @@ Execute the automated test suite with coverage reporting:
 - [x] **Phase 2: Build Execution Engine & CLI Prototype** (Git Ingestion, Build Detector, Isolated Sandbox, Artifact Collector, CLI)
 - [x] **Phase 3: Artifact Analysis & Normalization Framework** (Multi-hasher, Unpacker, OCI Inspector, Dual-Mode Normalizer, Diff Engine)
 - [x] **Phase 4: Diagnostic Engine & Reproducibility Scoring** (11 tightened rules, evidence bundle with epistemic status, 3-tier remediation, CRI & multi-dimensional verdict)
-- [ ] **Phase 5: FastAPI Backend & Persistence Layer**
-- [ ] **Phase 6: Professional Web Dashboard**
-- [ ] **Phase 7: Controlled Experimental Benchmark Suite**
-- [ ] **Phase 8: Final Documentation, Viva Preparation & Academic Submission**
+- [x] **Phase 5A: Shared Application Services & Durable Persistence** (Async Repositories, SQLite WAL Pragmas, Crash Recovery, Service Layer, CLI Refactor)
+- [ ] **Milestone B: Slint vs. Iced Minimal Prototype Benchmarking**
+- [ ] **Milestone C: Desktop Framework Selection & UI Shell Foundation**
+- [ ] **Milestone D: Local Structured JSONL IPC Daemon & Process Supervision**
+- [ ] **Milestone E: Desktop Overview, Repository & Build Screens**
+- [ ] **Milestone F: Comparison, Diagnostics & Causality Graph Screens**
+- [ ] **Milestone G: Perturbation, Reproducibility Passport & Remediation UI**
+- [ ] **Milestone H: Packaging, Verification & Academic Deliverables**
 
 ---
 
@@ -112,5 +115,5 @@ Execute the automated test suite with coverage reporting:
 
 - **CO1 (CI/CD Toolchain, Version Control, Build Automation)**: Exact Git revision tracking and automated containerized build orchestration.
 - **CO2 (Security Practices in CI/CD Pipelines)**: Software supply chain verification; distinguishing benign differences from malicious artifact tampering.
-- **CO3 (Reliable CI/CD Workflows)**: Detecting and diagnosing flaky, non-deterministic builds.
+- **CO3 (Reliable CI/CD Workflows)**: Detecting and diagnosing flaky, non-deterministic builds with durable crash recovery.
 - **CO4 (DevSecOps Principles)**: Shift-left reproducibility verification with automated remediation guidance.

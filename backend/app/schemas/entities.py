@@ -20,6 +20,8 @@ class BuildStatus(str, Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     TIMED_OUT = "timed_out"
+    CANCELLED = "cancelled"
+    EXECUTION_INTERRUPTED = "execution_interrupted"
 
 
 class ComparisonMode(str, Enum):

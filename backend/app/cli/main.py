@@ -1,9 +1,6 @@
 """ReproForge Command Line Interface."""
 
 import asyncio
-import json
-import sys
-import uuid
 from pathlib import Path
 from typing import Optional
 import click
@@ -11,18 +8,12 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from backend.app.artifacts.collector import ArtifactCollector
-from backend.app.comparison.diff import StructuralDiffEngine
 from backend.app.core.config import settings
-from backend.app.diagnostics.engine import DiagnosticEngine
-from backend.app.diagnostics.evidence import DiagnosticContext
-from backend.app.diagnostics.remediation import RemediationGenerator
-from backend.app.execution.runner import DockerBuildBackend, LocalSandboxBackend
-from backend.app.execution.workspace import WorkspaceManager
-from backend.app.fingerprinting.engine import fingerprinter
 from backend.app.orchestration.detector import BuildConfigurationDetector
-from backend.app.orchestration.git import GitRepositoryManager
-from backend.app.scoring.calculator import ReproducibilityCalculator
+from backend.app.schemas.entities import BuildStatus
+from backend.app.services.build_service import BuildService
+from backend.app.services.comparison_service import ComparisonService
+from backend.app.services.fingerprint_service import FingerprintService
 
 console = Console()
 
@@ -37,8 +28,8 @@ def cli():
 @cli.command("info")
 def info_command():
     """Display system status, versions, and runtime capabilities."""
-    sys_info = fingerprinter.capture_system_info()
-    tools = fingerprinter.capture_toolchain_info()
+    fp_svc = FingerprintService()
+    sys_info, tools = fp_svc.get_telemetry()
 
     console.print(
         Panel.fit(
@@ -69,7 +60,8 @@ def info_command():
 @click.option("--json-out", is_flag=True, help="Output canonical fingerprint JSON.")
 def fingerprint_command(json_out: bool):
     """Capture and display structured environment fingerprint and cryptographic digest."""
-    fp = fingerprinter.capture_fingerprint()
+    fp_svc = FingerprintService()
+    fp = fp_svc.capture_fingerprint()
 
     if json_out:
         console.print_json(data=fp.model_dump(mode="json"))
@@ -139,69 +131,39 @@ def build_command(
     timeout_seconds: int,
 ):
     """Execute an isolated build of a specific Git revision and collect artifacts."""
-    build_id = f"build-{uuid.uuid4().hex[:10]}"
-    console.print(f"[bold cyan]ReproForge Build Orchestrator[/bold cyan] (ID: [bold white]{build_id}[/bold white])")
+    build_svc = BuildService()
 
-    # 1. Ingest Git revision
-    git_mgr = GitRepositoryManager()
-    resolved_sha = git_mgr.resolve_commit_sha(repo_path, commit_ref)
-    console.print(f"Git Reference: [yellow]{commit_ref}[/yellow] -> Pinned SHA: [green]{resolved_sha}[/green]")
-
-    # 2. Detect build configuration
-    detector = BuildConfigurationDetector()
-    systems = detector.detect(repo_path)
-    primary_system = systems[0]
-    build_cmd = custom_cmd or primary_system.suggested_build_command
-    console.print(f"Target Build Command: [bold white]{build_cmd}[/bold white]")
-
-    # 3. Setup workspace and export clean source revision
-    ws_mgr = WorkspaceManager()
-    ws_path = ws_mgr.allocate_workspace(build_id)
-    source_dir = ws_path / "source"
-
-    try:
-        git_mgr.export_clean_revision(repo_path, source_dir, resolved_sha)
-    except Exception as e:
-        console.print(f"[red]Failed to export source revision: {e}[/red]")
-        ws_mgr.cleanup_workspace(ws_path)
-        sys.exit(1)
-
-    # 4. Execute build
+    console.print(f"[bold cyan]ReproForge Build Orchestrator[/bold cyan]")
+    console.print(f"Git Reference: [yellow]{commit_ref}[/yellow]")
     console.print(f"Executing build via backend: [bold cyan]{backend_type}[/bold cyan]...")
-    runner = DockerBuildBackend() if backend_type == "docker" else LocalSandboxBackend()
 
-    async def run_build():
-        return await runner.execute(
-            build_id=build_id,
-            workspace_source_dir=source_dir,
-            build_command=build_cmd,
+    outcome = asyncio.run(
+        build_svc.execute_build(
+            repo_path=repo_path,
+            commit_ref=commit_ref,
+            backend_type=backend_type,
+            custom_cmd=custom_cmd,
             timeout_seconds=timeout_seconds,
         )
+    )
 
-    result = asyncio.run(run_build())
-
-    # 5. Check outcome and collect artifacts
-    if result.exit_code == 0:
-        console.print(f"[bold green]Build Succeeded[/bold green] (Duration: {result.duration_seconds}s)")
-        collector = ArtifactCollector()
-        docker_tag = result.metadata.get("image_tag") if backend_type == "docker" else None
-        artifacts = collector.collect_from_workspace(build_id, source_dir, docker_image_tag=docker_tag)
-
-        if artifacts:
+    if outcome.exit_code == 0:
+        console.print(f"[bold green]Build Succeeded[/bold green] (Duration: {outcome.duration_seconds}s)")
+        if outcome.artifacts:
             table = Table(title="Collected Build Artifacts", border_style="green")
             table.add_column("Artifact File", style="bold")
             table.add_column("Type", style="cyan")
             table.add_column("Size (Bytes)", style="yellow")
             table.add_column("Strict SHA-256", style="dim white")
 
-            for a in artifacts:
+            for a in outcome.artifacts:
                 table.add_row(a.relative_path, a.artifact_type, str(a.file_size_bytes), a.strict_sha256[:20] + "...")
             console.print(table)
         else:
             console.print("[dim yellow]Build completed but no output artifacts were detected in standard locations.[/dim yellow]")
     else:
-        console.print(f"[bold red]Build Failed[/bold red] (Exit Code: {result.exit_code}, Duration: {result.duration_seconds}s)")
-        console.print(f"Log output available at: {result.log_file_path}")
+        console.print(f"[bold red]Build Failed[/bold red] (Exit Code: {outcome.exit_code}, Duration: {outcome.duration_seconds}s)")
+        console.print(f"Log output available at: {outcome.log_file_path}")
 
 
 @cli.command("compare")
@@ -213,21 +175,13 @@ def compare_command(artifact1: Path, artifact2: Path):
     console.print(f"Artifact 1: [yellow]{artifact1.name}[/yellow]")
     console.print(f"Artifact 2: [yellow]{artifact2.name}[/yellow]\n")
 
-    engine = StructuralDiffEngine()
-    work_dir = settings.DATA_DIR / "temp_comparison"
-    summary = engine.compare_artifacts(artifact1, artifact2, work_dir)
+    comp_svc = ComparisonService()
+    outcome = asyncio.run(comp_svc.compare_artifacts(artifact1, artifact2))
 
-    # Execute Diagnostic & Scoring Engines
-    diag_engine = DiagnosticEngine()
-    diag_ctx = DiagnosticContext(comparison_summary=summary)
-    diagnostics = diag_engine.diagnose(diag_ctx)
-
-    remediation_gen = RemediationGenerator()
-    remediations = []
-    for d in diagnostics:
-        remediations.extend(remediation_gen.generate(d, diag_ctx))
-
-    score = ReproducibilityCalculator.evaluate(summary, diagnostics, diag_ctx)
+    summary = outcome.summary
+    diagnostics = outcome.diagnostics
+    remediations = outcome.remediations
+    score = outcome.assessment
 
     exact_badge = "[bold green]MATCH[/bold green]" if summary.exact_match else "[bold red]DIVERGED[/bold red]"
     norm_badge = "[bold green]EQUIVALENT[/bold green]" if summary.normalized_match else "[bold red]DIVERGED[/bold red]"

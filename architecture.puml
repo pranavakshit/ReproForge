@@ -6,58 +6,58 @@ skinparam componentStyle uml2
 skinparam packageStyle rectangle
 
 package "Presentation Layer" as PresentationPkg {
-  [Web Dashboard (React / TypeScript)] as DashboardUI
+  [Native Rust Desktop UI (Slint / Iced)] as DesktopApp
   [ReproForge CLI Application] as CliApp
+  [Optional Headless API (FastAPI / Automation)] as HeadlessApi
 }
 
-package "API Layer" as ApiPkg {
-  [FastAPI REST Service] as ApiService
-  [API Routing & Auth Controllers] as ApiControllers
+package "Shared Application Service Layer" as ServicesPkg {
+  [Repository Service] as RepoService
+  [Fingerprint Service] as FpService
+  [Build Execution Service] as BuildService
+  [Artifact Comparison Service] as CompService
+  [Diagnostic & Remediation Service] as DiagService
 }
 
-package "Orchestration Layer" as OrchestrationPkg {
-  [Build & Comparison Orchestrator] as Orchestrator
-  [Profile & Environment Scheduler] as EnvScheduler
+package "Execution & Orchestration Layer" as ExecutionPkg {
+  [Git Repository Manager] as GitManager
+  [Build Configuration Detector] as Detector
+  [Workspace & Sandbox Manager] as WorkspaceMgr
+  [Local Sandbox & Docker Runner] as RunnerBackend
+  [Artifact Discovery & Hasher Collector] as Collector
 }
 
-package "Execution Layer" as ExecutionPkg {
-  [Isolated Build Engine] as BuildEngine
-  [Docker & BuildKit Runner] as DockerRunner
-  [Workspace & Sandbox Manager] as SandboxManager
+package "Differential & Diagnostic Engine" as AnalysisPkg {
+  [Dual-Mode Normalizer (Strict vs Normalized)] as Normalizer
+  [Structural Differential Diff Engine] as DiffEngine
+  [Rule-Based Diagnostic Engine (11 Rules)] as DiagRules
+  [Remediation Generator (3-Tier Guidance)] as RemediationGen
+  [Reproducibility Assessment & CRI Scorer] as Scorer
 }
 
-package "Analysis & Diagnostic Layer" as AnalysisPkg {
-  [Environment Fingerprinting Engine] as Fingerprinter
-  [Artifact Ingestion & Storage Manager] as ArtifactManager
-  [Dual-Mode Normalizer (Strict vs Norm)] as Normalizer
-  [Structural Differential Engine] as DiffEngine
-  [Rule-Based Diagnostic Engine] as DiagnosticEngine
-  [Reproducibility Scorer (CRI)] as Scorer
+package "Durable Persistence Layer" as PersistencePkg {
+  [Async Repositories & Crash Reconciler] as Repositories
+  database "SQLite WAL Database (aiosqlite Engine)" as SqliteDb
 }
 
-package "Persistence & Reporting Layer" as PersistencePkg {
-  database "Relational Database (PostgreSQL / SQLite)" as Database
-  [Standalone HTML & JSON Report Exporter] as Reporter
-}
-
-' Distinct arrow colors for every individual connection
-DashboardUI -[#0066CC]-> ApiService : 1. HTTP/REST API Requests
-CliApp -[#FF5733]-> ApiService : 2. Headless Invocations
-ApiService -[#2E7D32]-> ApiControllers : 3. Dispatches Endpoints
-ApiControllers -[#8E24AA]-> Orchestrator : 4. Schedules Build Jobs
-Orchestrator -[#D81B60]-> EnvScheduler : 5. Resolves Target Profiles
-EnvScheduler -[#F57C00]-> Fingerprinter : 6. Triggers Environment Capture
-Fingerprinter -[#00838F]-> Database : 7. Persists Environment Fingerprints
-Orchestrator -[#5D4037]-> BuildEngine : 8. Launches Isolated Builds
-BuildEngine -[#1565C0]-> SandboxManager : 9. Allocates Isolated Workspaces
-BuildEngine -[#4527A0]-> DockerRunner : 10. Invokes Hermetic Container Builds
-BuildEngine -[#AD1457]-> ArtifactManager : 11. Transfers Collected Artifacts
-ArtifactManager -[#00695C]-> Normalizer : 12. Passes Raw Artifacts
-Normalizer -[#283593]-> DiffEngine : 13. Feeds Strict & Normalized Byte Streams
-DiffEngine -[#C62828]-> DiagnosticEngine : 14. Provides Structural Diff Findings
-Fingerprinter -[#4E342E]-> DiagnosticEngine : 15. Provides Environment Diffs
-DiagnosticEngine -[#37474F]-> Scorer : 16. Supplies Classified Failure Evidence
-Scorer -[#E65100]-> Database : 17. Stores Composite CRI & Findings
-Database -[#004D40]-> Reporter : 18. Exports Diagnostic Reports
-Reporter -[#6A1B9A]-> DashboardUI : 19. Renders Visual Diff & Remediation
+' Distinct unique arrow colors for every individual connection
+DesktopApp -[#1E88E5]-> ServicesPkg : 1. Local Structured IPC Calls
+CliApp -[#D81B60]-> ServicesPkg : 2. Direct Python Async Invocations
+HeadlessApi -[#8E24AA]-> ServicesPkg : 3. Remote Ingestion Endpoints
+RepoService -[#3949AB]-> GitManager : 4. Pinned Commit Resolution & Clean Export
+FpService -[#00ACC1]-> Repositories : 5. Telemetry Capture & Canonical Fingerprints
+BuildService -[#00897B]-> Detector : 6. Auto-detects Build Systems & Lockfiles
+BuildService -[#43A047]-> WorkspaceMgr : 7. Allocates Isolated Build Workspaces
+BuildService -[#7CB342]-> RunnerBackend : 8. Executes Sandboxed Subprocesses
+RunnerBackend -[#C0CA33]-> Collector : 9. Discovers & Stream-hashes Build Artifacts
+Collector -[#FDD835]-> Repositories : 10. Persists Strict SHA-256 Digest Records
+CompService -[#FFB300]-> Normalizer : 11. Normalizes Timestamps, Perms & Gzip Headers
+CompService -[#FB8C00]-> DiffEngine : 12. Executes Recursive Archive & File Diffs
+DiffEngine -[#F4511E]-> DiagRules : 13. Feeds Structural Findings & Content Diffs
+DiagRules -[#6D4C41]-> RemediationGen : 14. Generates Recommendation-only Guidance
+DiagRules -[#546E7A]-> Scorer : 15. Provides Classified Failure Evidence
+Scorer -[#E53935]-> CompService : 16. Produces Metric Vector & Categorical Verdict
+CompService -[#880E4F]-> Repositories : 17. Persists Comparisons, Findings & Verdicts
+BuildService -[#4A148C]-> Repositories : 18. Tracks Build Lifecycle & Post-Crash Recovery
+Repositories -[#0D47A1]-> SqliteDb : 19. Atomic WAL Commits with Busy Timeout
 @enduml
