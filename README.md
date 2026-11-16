@@ -100,7 +100,7 @@ Execute the automated test suite with coverage reporting:
 - [x] **Phase 1: Architecture & Project Foundation** (Core Models, Schemas, Alembic, Environment Fingerprinter)
 - [x] **Phase 2: Build Execution Engine & CLI Prototype** (Git Ingestion, Build Detector, Isolated Sandbox, Artifact Collector, CLI)
 - [x] **Phase 3: Artifact Analysis & Normalization Framework** (Multi-hasher, Unpacker, OCI Inspector, Dual-Mode Normalizer, Diff Engine)
-- [ ] **Phase 4: Diagnostic Engine & Reproducibility Scoring**
+- [x] **Phase 4: Diagnostic Engine & Reproducibility Scoring** (11 tightened rules, evidence bundle with epistemic status, 3-tier remediation, CRI & multi-dimensional verdict)
 - [ ] **Phase 5: FastAPI Backend & Persistence Layer**
 - [ ] **Phase 6: Professional Web Dashboard**
 - [ ] **Phase 7: Controlled Experimental Benchmark Suite**

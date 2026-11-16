@@ -14,11 +14,15 @@ from rich.table import Table
 from backend.app.artifacts.collector import ArtifactCollector
 from backend.app.comparison.diff import StructuralDiffEngine
 from backend.app.core.config import settings
+from backend.app.diagnostics.engine import DiagnosticEngine
+from backend.app.diagnostics.evidence import DiagnosticContext
+from backend.app.diagnostics.remediation import RemediationGenerator
 from backend.app.execution.runner import DockerBuildBackend, LocalSandboxBackend
 from backend.app.execution.workspace import WorkspaceManager
 from backend.app.fingerprinting.engine import fingerprinter
 from backend.app.orchestration.detector import BuildConfigurationDetector
 from backend.app.orchestration.git import GitRepositoryManager
+from backend.app.scoring.calculator import ReproducibilityCalculator
 
 console = Console()
 
@@ -213,21 +217,48 @@ def compare_command(artifact1: Path, artifact2: Path):
     work_dir = settings.DATA_DIR / "temp_comparison"
     summary = engine.compare_artifacts(artifact1, artifact2, work_dir)
 
+    # Execute Diagnostic & Scoring Engines
+    diag_engine = DiagnosticEngine()
+    diag_ctx = DiagnosticContext(comparison_summary=summary)
+    diagnostics = diag_engine.diagnose(diag_ctx)
+
+    remediation_gen = RemediationGenerator()
+    remediations = []
+    for d in diagnostics:
+        remediations.extend(remediation_gen.generate(d, diag_ctx))
+
+    score = ReproducibilityCalculator.evaluate(summary, diagnostics, diag_ctx)
+
     exact_badge = "[bold green]MATCH[/bold green]" if summary.exact_match else "[bold red]DIVERGED[/bold red]"
     norm_badge = "[bold green]EQUIVALENT[/bold green]" if summary.normalized_match else "[bold red]DIVERGED[/bold red]"
 
+    verdict_colors = {
+        "bit_for_bit_reproducible": "bold green",
+        "normalized_reproducible": "bold cyan",
+        "partially_reproducible": "bold yellow",
+        "non_reproducible": "bold red",
+        "inconclusive": "bold magenta",
+    }
+    v_style = verdict_colors.get(score.verdict.value, "bold white")
+    verdict_badge = f"[{v_style}]{score.verdict.value.upper()}[/{v_style}]"
+
     console.print(
         Panel(
+            f"[bold]Primary Reproducibility Verdict:[/bold] {verdict_badge}\n"
             f"[bold]Mode A (Strict Bit-for-Bit):[/bold] {exact_badge}\n"
             f"  Artifact 1 SHA-256: [dim]{summary.strict_sha_1}[/dim]\n"
             f"  Artifact 2 SHA-256: [dim]{summary.strict_sha_2}[/dim]\n\n"
             f"[bold]Mode B (Normalized Equivalence):[/bold] {norm_badge}\n"
             f"  Normalized SHA-1:   [dim]{summary.normalized_sha_1}[/dim]\n"
             f"  Normalized SHA-2:   [dim]{summary.normalized_sha_2}[/dim]\n\n"
-            f"[bold]Content Agreement Ratio:[/bold] [cyan]{round(summary.content_agreement_ratio * 100, 2)}%[/cyan]\n"
-            f"[bold]Metadata Agreement Ratio:[/bold] [magenta]{round(summary.metadata_agreement_ratio * 100, 2)}%[/magenta]\n"
-            f"[bold]Total Files Evaluated:[/bold] {summary.total_files_evaluated}",
-            title="Artifact Comparison Summary",
+            f"[bold]Metric Vector:[/bold]\n"
+            f"  • Content Agreement Ratio:  [cyan]{round(summary.content_agreement_ratio * 100, 2)}%[/cyan]\n"
+            f"  • Metadata Agreement Ratio: [magenta]{round(summary.metadata_agreement_ratio * 100, 2)}%[/magenta]\n"
+            f"  • Environment Consistency:  [yellow]{round(score.environment_consistency_score * 100, 2)}%[/yellow]\n"
+            f"  • Unexplained Differences:  [white]{score.unexplained_differences_count}[/white]\n\n"
+            f"[bold]Secondary Benchmark Scalar (CRI):[/bold] [bold white]{score.composite_reproducibility_index}[/bold white] / 1.0\n"
+            f"[dim]({score.cri_disclaimer})[/dim]",
+            title="Reproducibility Assessment",
             border_style="cyan",
         )
     )
@@ -252,6 +283,37 @@ def compare_command(artifact1: Path, artifact2: Path):
         console.print(table)
         if len(summary.findings) > 25:
             console.print(f"[dim]... and {len(summary.findings) - 25} more differences.[/dim]")
+
+    if diagnostics:
+        diag_table = Table(title="Diagnostic Root-Cause Findings", border_style="red")
+        diag_table.add_column("Category", style="bold red")
+        diag_table.add_column("Confidence", style="bold yellow")
+        diag_table.add_column("Root Cause Summary", style="white")
+
+        for d in diagnostics:
+            diag_table.add_row(
+                d.category.value,
+                d.confidence.value.upper(),
+                d.root_cause_summary,
+            )
+        console.print(diag_table)
+
+    if remediations:
+        rem_table = Table(title="Actionable Remediation Guidance", border_style="green")
+        rem_table.add_column("Action", style="bold green")
+        rem_table.add_column("Risk Level", style="cyan")
+        rem_table.add_column("Approval", style="yellow")
+        rem_table.add_column("Recommended Action / Code", style="white")
+
+        for r in remediations:
+            snippet = f"\n[dim]{r.code_snippet}[/dim]" if r.code_snippet else ""
+            rem_table.add_row(
+                r.title,
+                r.risk_level.value.upper(),
+                "Required" if r.approval_required else "Autonomous (isolated)",
+                f"{r.proposed_action}{snippet}",
+            )
+        console.print(rem_table)
 
 
 if __name__ == "__main__":

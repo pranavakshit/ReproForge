@@ -71,5 +71,5 @@ ehthumbs.db
 *.swp
 *.swo
 
-# Presentation binary
-docs/*.pptx
+# Docs
+docs/
