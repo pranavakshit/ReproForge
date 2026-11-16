@@ -1,0 +1,63 @@
+@startuml
+title ReproForge: Cross-Environment Software Build Reproducibility and Diagnostic Framework
+
+skinparam backgroundColor #FAFAFA
+skinparam componentStyle uml2
+skinparam packageStyle rectangle
+
+package "Presentation Layer" as PresentationPkg {
+  [Web Dashboard (React / TypeScript)] as DashboardUI
+  [ReproForge CLI Application] as CliApp
+}
+
+package "API Layer" as ApiPkg {
+  [FastAPI REST Service] as ApiService
+  [API Routing & Auth Controllers] as ApiControllers
+}
+
+package "Orchestration Layer" as OrchestrationPkg {
+  [Build & Comparison Orchestrator] as Orchestrator
+  [Profile & Environment Scheduler] as EnvScheduler
+}
+
+package "Execution Layer" as ExecutionPkg {
+  [Isolated Build Engine] as BuildEngine
+  [Docker & BuildKit Runner] as DockerRunner
+  [Workspace & Sandbox Manager] as SandboxManager
+}
+
+package "Analysis & Diagnostic Layer" as AnalysisPkg {
+  [Environment Fingerprinting Engine] as Fingerprinter
+  [Artifact Ingestion & Storage Manager] as ArtifactManager
+  [Dual-Mode Normalizer (Strict vs Norm)] as Normalizer
+  [Structural Differential Engine] as DiffEngine
+  [Rule-Based Diagnostic Engine] as DiagnosticEngine
+  [Reproducibility Scorer (CRI)] as Scorer
+}
+
+package "Persistence & Reporting Layer" as PersistencePkg {
+  database "Relational Database (PostgreSQL / SQLite)" as Database
+  [Standalone HTML & JSON Report Exporter] as Reporter
+}
+
+' Distinct arrow colors for every individual connection
+DashboardUI -[#0066CC]-> ApiService : 1. HTTP/REST API Requests
+CliApp -[#FF5733]-> ApiService : 2. Headless Invocations
+ApiService -[#2E7D32]-> ApiControllers : 3. Dispatches Endpoints
+ApiControllers -[#8E24AA]-> Orchestrator : 4. Schedules Build Jobs
+Orchestrator -[#D81B60]-> EnvScheduler : 5. Resolves Target Profiles
+EnvScheduler -[#F57C00]-> Fingerprinter : 6. Triggers Environment Capture
+Fingerprinter -[#00838F]-> Database : 7. Persists Environment Fingerprints
+Orchestrator -[#5D4037]-> BuildEngine : 8. Launches Isolated Builds
+BuildEngine -[#1565C0]-> SandboxManager : 9. Allocates Isolated Workspaces
+BuildEngine -[#4527A0]-> DockerRunner : 10. Invokes Hermetic Container Builds
+BuildEngine -[#AD1457]-> ArtifactManager : 11. Transfers Collected Artifacts
+ArtifactManager -[#00695C]-> Normalizer : 12. Passes Raw Artifacts
+Normalizer -[#283593]-> DiffEngine : 13. Feeds Strict & Normalized Byte Streams
+DiffEngine -[#C62828]-> DiagnosticEngine : 14. Provides Structural Diff Findings
+Fingerprinter -[#4E342E]-> DiagnosticEngine : 15. Provides Environment Diffs
+DiagnosticEngine -[#37474F]-> Scorer : 16. Supplies Classified Failure Evidence
+Scorer -[#E65100]-> Database : 17. Stores Composite CRI & Findings
+Database -[#004D40]-> Reporter : 18. Exports Diagnostic Reports
+Reporter -[#6A1B9A]-> DashboardUI : 19. Renders Visual Diff & Remediation
+@enduml
