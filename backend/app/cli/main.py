@@ -12,6 +12,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from backend.app.artifacts.collector import ArtifactCollector
+from backend.app.comparison.diff import StructuralDiffEngine
 from backend.app.core.config import settings
 from backend.app.execution.runner import DockerBuildBackend, LocalSandboxBackend
 from backend.app.execution.workspace import WorkspaceManager
@@ -197,6 +198,60 @@ def build_command(
     else:
         console.print(f"[bold red]Build Failed[/bold red] (Exit Code: {result.exit_code}, Duration: {result.duration_seconds}s)")
         console.print(f"Log output available at: {result.log_file_path}")
+
+
+@cli.command("compare")
+@click.argument("artifact1", type=click.Path(exists=True, dir_okay=True, path_type=Path))
+@click.argument("artifact2", type=click.Path(exists=True, dir_okay=True, path_type=Path))
+def compare_command(artifact1: Path, artifact2: Path):
+    """Compare two build artifacts in Strict (Mode A) and Normalized (Mode B) modes."""
+    console.print(f"[bold cyan]ReproForge Artifact Differential Engine[/bold cyan]")
+    console.print(f"Artifact 1: [yellow]{artifact1.name}[/yellow]")
+    console.print(f"Artifact 2: [yellow]{artifact2.name}[/yellow]\n")
+
+    engine = StructuralDiffEngine()
+    work_dir = settings.DATA_DIR / "temp_comparison"
+    summary = engine.compare_artifacts(artifact1, artifact2, work_dir)
+
+    exact_badge = "[bold green]MATCH[/bold green]" if summary.exact_match else "[bold red]DIVERGED[/bold red]"
+    norm_badge = "[bold green]EQUIVALENT[/bold green]" if summary.normalized_match else "[bold red]DIVERGED[/bold red]"
+
+    console.print(
+        Panel(
+            f"[bold]Mode A (Strict Bit-for-Bit):[/bold] {exact_badge}\n"
+            f"  Artifact 1 SHA-256: [dim]{summary.strict_sha_1}[/dim]\n"
+            f"  Artifact 2 SHA-256: [dim]{summary.strict_sha_2}[/dim]\n\n"
+            f"[bold]Mode B (Normalized Equivalence):[/bold] {norm_badge}\n"
+            f"  Normalized SHA-1:   [dim]{summary.normalized_sha_1}[/dim]\n"
+            f"  Normalized SHA-2:   [dim]{summary.normalized_sha_2}[/dim]\n\n"
+            f"[bold]Content Agreement Ratio:[/bold] [cyan]{round(summary.content_agreement_ratio * 100, 2)}%[/cyan]\n"
+            f"[bold]Metadata Agreement Ratio:[/bold] [magenta]{round(summary.metadata_agreement_ratio * 100, 2)}%[/magenta]\n"
+            f"[bold]Total Files Evaluated:[/bold] {summary.total_files_evaluated}",
+            title="Artifact Comparison Summary",
+            border_style="cyan",
+        )
+    )
+
+    if summary.findings:
+        table = Table(title="Detected Differences Breakdown", border_style="yellow")
+        table.add_column("Relative Path", style="bold")
+        table.add_column("Discrepancy Type", style="cyan")
+        table.add_column("Strict", style="red")
+        table.add_column("Normalized", style="green")
+        table.add_column("Size Delta", style="yellow")
+
+        for f in summary.findings[:25]:
+            table.add_row(
+                f.file_path,
+                f.diff_type,
+                "[red]Diverged[/red]" if not f.strict_match else "[green]Match[/green]",
+                "[green]Equivalent[/green]" if f.normalized_match else "[red]Diverged[/red]",
+                f"{f.size_delta_bytes:+d} B",
+            )
+
+        console.print(table)
+        if len(summary.findings) > 25:
+            console.print(f"[dim]... and {len(summary.findings) - 25} more differences.[/dim]")
 
 
 if __name__ == "__main__":
