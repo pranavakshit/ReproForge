@@ -1,0 +1,75 @@
+# Virtual Environment
+.venv/
+venv/
+ENV/
+env/
+
+# Python byte code and caches
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Testing & Coverage caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+
+# Node & Frontend
+node_modules/
+.npm/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Environment & local secrets
+.env
+.env.*
+!.env.example
+
+# Local databases and runtime build artifacts
+*.sqlite3
+*.db
+data/
+build_workspaces/
+collected_artifacts/
+
+# Operating system files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+[Dd]esktop.ini
+
+# IDE & Editor caches (VS Code workspace settings are committed, but local caches ignored)
+.vscode/*.log
+*.swp
+*.swo
+
+# Presentation binary
+docs/*.pptx
