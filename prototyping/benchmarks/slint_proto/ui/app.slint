@@ -1,0 +1,468 @@
+import { ListView, Button } from "std-widgets.slint";
+
+export struct BuildRowData {
+    build_id: string,
+    commit_sha: string,
+    backend: string,
+    status: string,
+    verdict: string,
+    duration: string,
+}
+
+component ShimmerBlock inherits Rectangle {
+    in property <bool> is_loading: false;
+    in property <bool> motion_enabled: true;
+    in property <float> shimmer_progress: 0.0;
+
+    background: is_loading ? #1e293b : transparent;
+    border-radius: 4px;
+    clip: true;
+
+    if is_loading && motion_enabled: Rectangle {
+        x: shimmer_progress * parent.width - 60px;
+        width: 80px;
+        height: parent.height;
+        background: @linear-gradient(90deg, transparent 0%, #334155 50%, transparent 100%);
+    }
+}
+
+export component MainWindow inherits Window {
+    title: "ReproForge — Build Reproducibility Framework (Slint)";
+    preferred-width: 1080px;
+    preferred-height: 720px;
+    background: #0b0f19;
+
+    in-out property <bool> is_loading: false;
+    in-out property <bool> motion_enabled: true;
+    in-out property <float> shimmer_pos: 0.5;
+
+    // Metrics
+    in property <string> total_builds: "200";
+    in property <string> bit_for_bit_rate: "85.4%";
+    in property <string> normalized_rate: "96.2%";
+    in property <string> unresolved_count: "14";
+
+    in property <[BuildRowData]> build_rows: [];
+
+    callback refresh_requested();
+
+    forward-focus: key-handler;
+
+    key-handler := FocusScope {
+        key-pressed(event) => {
+            if (event.text == "r" && event.modifiers.control) {
+                root.refresh_requested();
+                return accept;
+            }
+            return reject;
+        }
+    }
+
+    VerticalLayout {
+        padding: 0px;
+        spacing: 0px;
+
+        // --- Custom Titlebar ---
+        Rectangle {
+            height: 44px;
+            background: #111827;
+            border-width: 1px;
+            border-color: #1f2937;
+
+            HorizontalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                alignment: space-between;
+
+                // Brand
+                HorizontalLayout {
+                    spacing: 12px;
+                    alignment: start;
+                    Text {
+                        text: "ReproForge";
+                        font-size: 15px;
+                        font-weight: 700;
+                        color: #38bdf8;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        text: "v0.1.0";
+                        font-size: 11px;
+                        color: #64748b;
+                        vertical-alignment: center;
+                    }
+
+                    // Engine Connection Pill
+                    Rectangle {
+                        height: 24px;
+                        border-radius: 12px;
+                        background: #064e3b;
+                        border-width: 1px;
+                        border-color: #059669;
+
+                        HorizontalLayout {
+                            padding-left: 10px;
+                            padding-right: 10px;
+                            spacing: 6px;
+
+                            Rectangle {
+                                width: 6px;
+                                height: 6px;
+                                border-radius: 3px;
+                                background: #34d399;
+                                y: 9px;
+                            }
+                            Text {
+                                text: "Engine Connected (PID 4820)";
+                                font-size: 11px;
+                                color: #a7f3d0;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+
+                // Actions
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+
+                    Rectangle {
+                        width: 110px;
+                        height: 28px;
+                        border-radius: 4px;
+                        background: touch.pressed ? #334155 : #1e293b;
+                        border-width: 1px;
+                        border-color: #475569;
+
+                        touch := TouchArea {
+                            clicked => { root.refresh_requested(); }
+                        }
+
+                        Text {
+                            text: "Refresh (Ctrl+R)";
+                            font-size: 11px;
+                            color: #f8fafc;
+                            vertical-alignment: center;
+                            horizontal-alignment: center;
+                        }
+                    }
+                }
+            }
+        }
+
+        // --- Main Body Layout: Sidebar + Workspace ---
+        HorizontalLayout {
+            spacing: 0px;
+
+            // Sidebar
+            Rectangle {
+                width: 200px;
+                background: #0f172a;
+                border-width: 1px;
+                border-color: #1e293b;
+
+                VerticalLayout {
+                    padding: 12px;
+                    spacing: 6px;
+                    alignment: start;
+
+                    Rectangle {
+                        height: 36px;
+                        border-radius: 6px;
+                        background: #1e293b;
+                        HorizontalLayout {
+                            padding-left: 12px;
+                            Text {
+                                text: "Dashboard";
+                                font-size: 13px;
+                                font-weight: 600;
+                                color: #38bdf8;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        height: 36px;
+                        border-radius: 6px;
+                        HorizontalLayout {
+                            padding-left: 12px;
+                            Text {
+                                text: "Repositories";
+                                font-size: 13px;
+                                color: #94a3b8;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        height: 36px;
+                        border-radius: 6px;
+                        HorizontalLayout {
+                            padding-left: 12px;
+                            Text {
+                                text: "Build Executions";
+                                font-size: 13px;
+                                color: #94a3b8;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        height: 36px;
+                        border-radius: 6px;
+                        HorizontalLayout {
+                            padding-left: 12px;
+                            Text {
+                                text: "Diff & Diagnostics";
+                                font-size: 13px;
+                                color: #94a3b8;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        height: 36px;
+                        border-radius: 6px;
+                        HorizontalLayout {
+                            padding-left: 12px;
+                            Text {
+                                text: "Settings";
+                                font-size: 13px;
+                                color: #94a3b8;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // --- Workspace Area ---
+            Rectangle {
+                background: #0b0f19;
+
+                VerticalLayout {
+                    padding: 20px;
+                    spacing: 16px;
+
+                    // Section Heading
+                    HorizontalLayout {
+                        alignment: space-between;
+                        Text {
+                            text: "Build Reproducibility Telemetry";
+                            font-size: 18px;
+                            font-weight: 700;
+                            color: #f8fafc;
+                        }
+                        Text {
+                            text: root.motion_enabled ? "OS Motion: Enabled" : "OS Motion: Reduced";
+                            font-size: 11px;
+                            color: #64748b;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    // 4 Metric Cards
+                    HorizontalLayout {
+                        spacing: 14px;
+                        height: 90px;
+
+                        // Card 1: Total Builds
+                        Rectangle {
+                            background: #111827;
+                            border-radius: 8px;
+                            border-width: 1px;
+                            border-color: #1f2937;
+                            padding: 14px;
+
+                            VerticalLayout {
+                                alignment: space-between;
+                                Text {
+                                    text: "TOTAL VERIFIED BUILDS";
+                                    font-size: 11px;
+                                    font-weight: 600;
+                                    color: #94a3b8;
+                                }
+                                Text {
+                                    text: root.total_builds;
+                                    font-size: 24px;
+                                    font-weight: 700;
+                                    color: #f8fafc;
+                                }
+                            }
+                            ShimmerBlock {
+                                is_loading: root.is_loading;
+                                motion_enabled: root.motion_enabled;
+                                shimmer_progress: root.shimmer_pos;
+                            }
+                        }
+
+                        // Card 2: Bit-for-Bit Rate
+                        Rectangle {
+                            background: #111827;
+                            border-radius: 8px;
+                            border-width: 1px;
+                            border-color: #1f2937;
+                            padding: 14px;
+
+                            VerticalLayout {
+                                alignment: space-between;
+                                Text {
+                                    text: "BIT-FOR-BIT RATE (S_exact)";
+                                    font-size: 11px;
+                                    font-weight: 600;
+                                    color: #10b981;
+                                }
+                                Text {
+                                    text: root.bit_for_bit_rate;
+                                    font-size: 24px;
+                                    font-weight: 700;
+                                    color: #10b981;
+                                }
+                            }
+                            ShimmerBlock {
+                                is_loading: root.is_loading;
+                                motion_enabled: root.motion_enabled;
+                                shimmer_progress: root.shimmer_pos;
+                            }
+                        }
+
+                        // Card 3: Normalized Rate
+                        Rectangle {
+                            background: #111827;
+                            border-radius: 8px;
+                            border-width: 1px;
+                            border-color: #1f2937;
+                            padding: 14px;
+
+                            VerticalLayout {
+                                alignment: space-between;
+                                Text {
+                                    text: "NORMALIZED RATE (S_norm)";
+                                    font-size: 11px;
+                                    font-weight: 600;
+                                    color: #38bdf8;
+                                }
+                                Text {
+                                    text: root.normalized_rate;
+                                    font-size: 24px;
+                                    font-weight: 700;
+                                    color: #38bdf8;
+                                }
+                            }
+                            ShimmerBlock {
+                                is_loading: root.is_loading;
+                                motion_enabled: root.motion_enabled;
+                                shimmer_progress: root.shimmer_pos;
+                            }
+                        }
+
+                        // Card 4: Unresolved Discrepancies
+                        Rectangle {
+                            background: #111827;
+                            border-radius: 8px;
+                            border-width: 1px;
+                            border-color: #1f2937;
+                            padding: 14px;
+
+                            VerticalLayout {
+                                alignment: space-between;
+                                Text {
+                                    text: "UNRESOLVED DRIFT (N_unexplained)";
+                                    font-size: 11px;
+                                    font-weight: 600;
+                                    color: #f59e0b;
+                                }
+                                Text {
+                                    text: root.unresolved_count;
+                                    font-size: 24px;
+                                    font-weight: 700;
+                                    color: #f59e0b;
+                                }
+                            }
+                            ShimmerBlock {
+                                is_loading: root.is_loading;
+                                motion_enabled: root.motion_enabled;
+                                shimmer_progress: root.shimmer_pos;
+                            }
+                        }
+                    }
+
+                    // Build History Table Container
+                    Rectangle {
+                        background: #111827;
+                        border-radius: 8px;
+                        border-width: 1px;
+                        border-color: #1f2937;
+
+                        VerticalLayout {
+                            padding: 12px;
+                            spacing: 8px;
+
+                            // Table Header
+                            Rectangle {
+                                height: 32px;
+                                background: #1e293b;
+                                border-radius: 4px;
+
+                                HorizontalLayout {
+                                    padding-left: 12px;
+                                    padding-right: 12px;
+
+                                    Text { width: 140px; text: "BUILD ID"; font-size: 11px; font-weight: 600; color: #94a3b8; vertical-alignment: center; }
+                                    Text { width: 110px; text: "COMMIT"; font-size: 11px; font-weight: 600; color: #94a3b8; vertical-alignment: center; }
+                                    Text { width: 90px; text: "BACKEND"; font-size: 11px; font-weight: 600; color: #94a3b8; vertical-alignment: center; }
+                                    Text { width: 90px; text: "STATUS"; font-size: 11px; font-weight: 600; color: #94a3b8; vertical-alignment: center; }
+                                    Text { width: 220px; text: "PRIMARY VERDICT"; font-size: 11px; font-weight: 600; color: #94a3b8; vertical-alignment: center; }
+                                    Text { text: "DURATION"; font-size: 11px; font-weight: 600; color: #94a3b8; vertical-alignment: center; }
+                                }
+                            }
+
+                            // Table Rows List
+                            ListView {
+                                for row in root.build_rows : Rectangle {
+                                    height: 36px;
+                                    background: #151e2e;
+                                    border-width: 1px;
+                                    border-color: #1e293b;
+
+                                    HorizontalLayout {
+                                        padding-left: 12px;
+                                        padding-right: 12px;
+
+                                        Text { width: 140px; text: row.build_id; font-size: 12px; color: #f8fafc; font-weight: 500; vertical-alignment: center; }
+                                        Text { width: 110px; text: row.commit_sha; font-size: 12px; color: #cbd5e1; vertical-alignment: center; }
+                                        Text { width: 90px; text: row.backend; font-size: 12px; color: #94a3b8; vertical-alignment: center; }
+                                        Text {
+                                            width: 90px;
+                                            text: row.status;
+                                            font-size: 12px;
+                                            color: (row.status == "completed") ? #34d399 : #f87171;
+                                            vertical-alignment: center;
+                                        }
+                                        Text {
+                                            width: 220px;
+                                            text: row.verdict;
+                                            font-size: 12px;
+                                            font-weight: 600;
+                                            color: (row.verdict == "bit_for_bit_reproducible") ? #10b981 :
+                                                   (row.verdict == "normalized_reproducible") ? #38bdf8 :
+                                                   (row.verdict == "partially_reproducible") ? #fbbf24 :
+                                                   (row.verdict == "inconclusive") ? #c084fc : #ef4444;
+                                            vertical-alignment: center;
+                                        }
+                                        Text { text: row.duration; font-size: 12px; color: #94a3b8; vertical-alignment: center; }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

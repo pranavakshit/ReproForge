@@ -1,0 +1,34 @@
+{
+  "slint": {
+    "framework": "Slint",
+    "binary_size_mb": 10.33,
+    "startup_ms": {
+      "avg_ms": 12.3,
+      "min_ms": 9.0,
+      "max_ms": 24.9
+    },
+    "idle_telemetry": {
+      "avg_ram_mb": 113.84,
+      "min_ram_mb": 113.83,
+      "max_ram_mb": 113.84,
+      "avg_cpu_percent": 0.32,
+      "samples_count": 20
+    }
+  },
+  "iced": {
+    "framework": "Iced",
+    "binary_size_mb": 7.1,
+    "startup_ms": {
+      "avg_ms": 11.7,
+      "min_ms": 8.6,
+      "max_ms": 23.0
+    },
+    "idle_telemetry": {
+      "avg_ram_mb": 276.01,
+      "min_ram_mb": 275.95,
+      "max_ram_mb": 276.02,
+      "avg_cpu_percent": 0.4,
+      "samples_count": 20
+    }
+  }
+}
