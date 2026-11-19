@@ -1,0 +1,18 @@
+import { Theme } from "../theme.slint";
+
+export component ShimmerBlock inherits Rectangle {
+    in property <bool> is_loading: false;
+    in property <bool> motion_enabled: true;
+    in property <float> shimmer_progress: 0.0;
+
+    background: is_loading ? Theme.bg_elevated : transparent;
+    border-radius: Theme.radius_sm;
+    clip: true;
+
+    if is_loading && motion_enabled: Rectangle {
+        x: shimmer_progress * parent.width - 60px;
+        width: 80px;
+        height: parent.height;
+        background: @linear-gradient(90deg, transparent 0%, #334155 50%, transparent 100%);
+    }
+}

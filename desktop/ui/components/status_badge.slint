@@ -1,0 +1,40 @@
+import { Theme } from "../theme.slint";
+
+export component StatusBadge inherits Rectangle {
+    in property <string> text: "";
+    in property <string> variant: "exact"; // "exact", "norm", "warn", "inconclusive", "fail"
+
+    height: 22px;
+    border-radius: Theme.radius_sm;
+    border-width: 1px;
+
+    background: (root.variant == "exact") ? Theme.status_exact_bg :
+                (root.variant == "norm") ? Theme.status_norm_bg :
+                (root.variant == "warn") ? Theme.status_warn_bg :
+                (root.variant == "inconclusive") ? Theme.status_inconclusive_bg :
+                Theme.status_fail_bg;
+
+    border-color: (root.variant == "exact") ? Theme.status_exact_border :
+                  (root.variant == "norm") ? Theme.status_norm_border :
+                  (root.variant == "warn") ? Theme.status_warn_border :
+                  (root.variant == "inconclusive") ? Theme.status_inconclusive_border :
+                  Theme.status_fail_border;
+
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        alignment: center;
+
+        Text {
+            text: root.text;
+            font-size: 11px;
+            font-weight: 600;
+            vertical-alignment: center;
+            color: (root.variant == "exact") ? Theme.status_exact :
+                   (root.variant == "norm") ? Theme.status_norm :
+                   (root.variant == "warn") ? Theme.status_warn :
+                   (root.variant == "inconclusive") ? Theme.status_inconclusive :
+                   Theme.status_fail;
+        }
+    }
+}

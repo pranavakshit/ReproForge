@@ -1,0 +1,56 @@
+export global Theme {
+    // Surface & Background Colors
+    out property <color> bg_primary: #0b0f19;
+    out property <color> bg_secondary: #111827;
+    out property <color> bg_card: #151e2e;
+    out property <color> bg_elevated: #1e293b;
+    out property <color> bg_hover: #24334a;
+    out property <color> bg_active: #1e293b;
+
+    // Border Colors
+    out property <color> border_subtle: #1f2937;
+    out property <color> border_light: #334155;
+    out property <color> border_accent: #38bdf8;
+
+    // Text & Content Colors
+    out property <color> text_primary: #f8fafc;
+    out property <color> text_secondary: #cbd5e1;
+    out property <color> text_muted: #94a3b8;
+    out property <color> text_dim: #64748b;
+
+    // Accent Colors
+    out property <color> accent_cyan: #38bdf8;
+    out property <color> accent_blue: #3b82f6;
+
+    // Categorical Verdict & Status Palettes
+    // Bit-for-bit reproducible (Emerald/Green)
+    out property <color> status_exact: #10b981;
+    out property <color> status_exact_bg: #064e3b;
+    out property <color> status_exact_border: #059669;
+
+    // Normalized reproducible (Cyan/Sky)
+    out property <color> status_norm: #38bdf8;
+    out property <color> status_norm_bg: #0c4a6e;
+    out property <color> status_norm_border: #0284c7;
+
+    // Partially reproducible / Unresolved drift (Amber)
+    out property <color> status_warn: #f59e0b;
+    out property <color> status_warn_bg: #451a03;
+    out property <color> status_warn_border: #b45309;
+
+    // Inconclusive (Purple/Violet)
+    out property <color> status_inconclusive: #c084fc;
+    out property <color> status_inconclusive_bg: #3b0764;
+    out property <color> status_inconclusive_border: #7e22ce;
+
+    // Failure / Discrepancy (Rose/Red)
+    out property <color> status_fail: #f87171;
+    out property <color> status_fail_bg: #450a0a;
+    out property <color> status_fail_border: #b91c1c;
+
+    // Radii
+    out property <length> radius_sm: 4px;
+    out property <length> radius_md: 8px;
+    out property <length> radius_lg: 12px;
+    out property <length> radius_full: 9999px;
+}

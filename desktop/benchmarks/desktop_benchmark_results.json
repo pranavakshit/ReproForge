@@ -1,0 +1,57 @@
+{
+  "binary_size_mb": 11.15,
+  "benchmarks": {
+    "hardware_200": {
+      "name": "Slint Permanent (Hardware)",
+      "records": 200,
+      "first_frame_ms": {
+        "avg_ms": 298.7,
+        "min_ms": 281.6,
+        "max_ms": 329.2
+      },
+      "idle_telemetry": {
+        "avg_ram_mb": 118.4,
+        "avg_cpu_percent": 0.0
+      }
+    },
+    "software_200": {
+      "name": "Slint Permanent (Software)",
+      "records": 200,
+      "first_frame_ms": {
+        "avg_ms": 65.2,
+        "min_ms": 58.8,
+        "max_ms": 70.7
+      },
+      "idle_telemetry": {
+        "avg_ram_mb": 38.7,
+        "avg_cpu_percent": 0.0
+      }
+    },
+    "hardware_10000": {
+      "name": "Slint Permanent (Hardware)",
+      "records": 10000,
+      "first_frame_ms": {
+        "avg_ms": 310.8,
+        "min_ms": 292.4,
+        "max_ms": 334.0
+      },
+      "idle_telemetry": {
+        "avg_ram_mb": 127.08,
+        "avg_cpu_percent": 0.0
+      }
+    },
+    "hardware_50000": {
+      "name": "Slint Permanent (Hardware)",
+      "records": 50000,
+      "first_frame_ms": {
+        "avg_ms": 302.3,
+        "min_ms": 292.1,
+        "max_ms": 313.6
+      },
+      "idle_telemetry": {
+        "avg_ram_mb": 160.72,
+        "avg_cpu_percent": 0.0
+      }
+    }
+  }
+}

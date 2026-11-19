@@ -6,7 +6,7 @@ skinparam componentStyle uml2
 skinparam packageStyle rectangle
 
 package "Presentation Layer" as PresentationPkg {
-  [Native Rust Desktop UI (Slint / Iced)] as DesktopApp
+  [Native Rust Desktop UI (Slint v1.19.0 - Hardware & Software)] as DesktopApp
   [ReproForge CLI Application] as CliApp
   [Optional Headless API (FastAPI / Automation)] as HeadlessApi
 }

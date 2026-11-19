@@ -1,0 +1,128 @@
+import { Theme } from "../theme.slint";
+import { AboutSlint } from "std-widgets.slint";
+
+export component AboutModal inherits Rectangle {
+    in property <bool> is_open: false;
+    callback close_clicked();
+
+    if root.is_open: Rectangle {
+        background: #000000aa;
+
+        // Dismiss backdrop touch
+        TouchArea {
+            clicked => { root.close_clicked(); }
+        }
+
+        // Modal Box
+        Rectangle {
+            width: 580px;
+            height: 480px;
+            background: Theme.bg_secondary;
+            border-radius: Theme.radius_lg;
+            border-width: 1px;
+            border-color: Theme.border_light;
+            clip: true;
+
+            VerticalLayout {
+                padding: 24px;
+                spacing: 16px;
+
+                // Header
+                HorizontalLayout {
+                    alignment: space-between;
+                    Text {
+                        text: "About ReproForge & Open-Source Licenses";
+                        font-size: 16px;
+                        font-weight: 700;
+                        color: Theme.text_primary;
+                        vertical-alignment: center;
+                    }
+                    Rectangle {
+                        width: 28px;
+                        height: 28px;
+                        border-radius: Theme.radius_sm;
+                        background: close_touch.has_hover ? Theme.bg_hover : Theme.bg_card;
+                        close_touch := TouchArea { clicked => { root.close_clicked(); } }
+                        Text {
+                            text: "✕";
+                            font-size: 14px;
+                            color: Theme.text_muted;
+                            vertical-alignment: center;
+                            horizontal-alignment: center;
+                        }
+                    }
+                }
+
+                // Project Details
+                Rectangle {
+                    background: Theme.bg_card;
+                    border-radius: Theme.radius_md;
+                    border-width: 1px;
+                    border-color: Theme.border_subtle;
+                    padding: 12px;
+
+                    VerticalLayout {
+                        spacing: 4px;
+                        Text {
+                            text: "ReproForge — Build Reproducibility & Diagnostic Framework";
+                            font-size: 13px;
+                            font-weight: 600;
+                            color: Theme.accent_cyan;
+                        }
+                        Text {
+                            text: "Final-year B.Tech CSE DevOps Capstone (UPES, Sem VII, Course: CSDV4009P)";
+                            font-size: 11px;
+                            color: Theme.text_secondary;
+                        }
+                        Text {
+                            text: "Cross-environment bit-for-bit and normalized artifact differential engine.";
+                            font-size: 11px;
+                            color: Theme.text_dim;
+                        }
+                    }
+                }
+
+                // Official Slint Royalty-Free 2.0 Attribution Widget
+                Rectangle {
+                    background: Theme.bg_card;
+                    border-radius: Theme.radius_md;
+                    border-width: 1px;
+                    border-color: Theme.border_subtle;
+                    padding: 8px;
+                    height: 220px;
+
+                    VerticalLayout {
+                        spacing: 6px;
+                        Text {
+                            text: "GUI Engine: Slint Royalty-Free 2.0 License Attribution";
+                            font-size: 11px;
+                            font-weight: 600;
+                            color: Theme.text_muted;
+                        }
+                        AboutSlint {}
+                    }
+                }
+
+                // Footer
+                HorizontalLayout {
+                    alignment: end;
+                    Rectangle {
+                        width: 90px;
+                        height: 32px;
+                        border-radius: Theme.radius_sm;
+                        background: Theme.accent_cyan;
+                        btn_touch := TouchArea { clicked => { root.close_clicked(); } }
+                        Text {
+                            text: "Close";
+                            font-size: 12px;
+                            font-weight: 600;
+                            color: #0b0f19;
+                            vertical-alignment: center;
+                            horizontal-alignment: center;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

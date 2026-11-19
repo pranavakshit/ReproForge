@@ -1,0 +1,267 @@
+import { Theme } from "../theme.slint";
+import { StatusBadge } from "../components/status_badge.slint";
+
+export struct DiffEntry {
+    path: string,
+    change_type: string, // "modified", "metadata_drift", "identical"
+    detail: string,
+}
+
+export component DiagnosticsView inherits Rectangle {
+    in property <string> comparison_id: "cmp-7f8a9b";
+    in property <string> target_a: "bld-rec-00001 (Host Win11)";
+    in property <string> target_b: "bld-rec-00002 (Host Ubuntu24)";
+    in property <string> primary_verdict: "normalized_reproducible";
+    in property <string> cri_score: "0.88";
+    in property <[DiffEntry]> diff_entries: [];
+
+    background: Theme.bg_primary;
+
+    VerticalLayout {
+        padding: 20px;
+        spacing: 16px;
+        alignment: start;
+
+        // View Header
+        HorizontalLayout {
+            alignment: space-between;
+            HorizontalLayout {
+                spacing: 10px;
+                Text {
+                    text: "Cross-Environment Differential & Diagnostic Engine";
+                    font-size: 18px;
+                    font-weight: 700;
+                    color: Theme.text_primary;
+                    vertical-alignment: center;
+                }
+                Rectangle {
+                    height: 20px;
+                    border-radius: Theme.radius_sm;
+                    background: Theme.bg_card;
+                    border-width: 1px;
+                    border-color: Theme.border_light;
+                    HorizontalLayout {
+                        padding-left: 6px; padding-right: 6px; alignment: center;
+                        Text { text: "Mock Telemetry"; font-size: 10px; font-weight: 600; color: Theme.accent_cyan; vertical-alignment: center; }
+                    }
+                }
+            }
+        }
+
+        // Comparison Pair Header Card
+        Rectangle {
+            height: 64px;
+            background: Theme.bg_secondary;
+            border-radius: Theme.radius_md;
+            border-width: 1px;
+            border-color: Theme.border_subtle;
+
+            HorizontalLayout {
+                padding: 12px;
+                spacing: 20px;
+                alignment: space-between;
+
+                HorizontalLayout {
+                    spacing: 16px;
+                    VerticalLayout {
+                        spacing: 2px;
+                        Text { text: "COMPARISON PAIR"; font-size: 10px; font-weight: 600; color: Theme.text_dim; }
+                        Text { text: root.target_a + " ↔ " + root.target_b; font-size: 13px; font-weight: 600; color: Theme.text_primary; }
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: 14px;
+                    alignment: end;
+                    VerticalLayout {
+                        spacing: 2px;
+                        Text { text: "PRIMARY VERDICT"; font-size: 10px; font-weight: 600; color: Theme.text_dim; horizontal-alignment: end; }
+                        StatusBadge { text: root.primary_verdict; variant: "norm"; }
+                    }
+                    VerticalLayout {
+                        spacing: 2px;
+                        Text { text: "SECONDARY CRI SCORE"; font-size: 10px; font-weight: 600; color: Theme.text_dim; horizontal-alignment: end; }
+                        Text { text: root.cri_score + " / 1.00"; font-size: 13px; font-weight: 700; color: Theme.accent_cyan; horizontal-alignment: end; }
+                    }
+                }
+            }
+        }
+
+        // Split Panel: Artifact Structural Diff + Diagnostic Evidence Trail
+        HorizontalLayout {
+            spacing: 16px;
+
+            // Left: Artifact Tree Structural Diff
+            Rectangle {
+                horizontal-stretch: 3;
+                height: 440px;
+                background: Theme.bg_secondary;
+                border-radius: Theme.radius_md;
+                border-width: 1px;
+                border-color: Theme.border_subtle;
+
+                VerticalLayout {
+                    padding: 14px;
+                    spacing: 10px;
+
+                    HorizontalLayout {
+                        alignment: space-between;
+                        Text { text: "Artifact Structural Differentials (Mode A vs Mode B)"; font-size: 13px; font-weight: 600; color: Theme.text_primary; }
+                        Text { text: "ZIP / TAR / Wheel Inspector"; font-size: 10px; color: Theme.text_dim; }
+                    }
+
+                    // Table Header
+                    Rectangle {
+                        height: 28px;
+                        background: Theme.bg_elevated;
+                        border-radius: Theme.radius_sm;
+                        HorizontalLayout {
+                            padding-left: 10px; padding-right: 10px;
+                            Text { horizontal-stretch: 1; text: "ARTIFACT ENTRY PATH"; font-size: 11px; font-weight: 600; color: Theme.text_muted; vertical-alignment: center; }
+                            Text { width: 120px; text: "DIFF CLASSIFICATION"; font-size: 11px; font-weight: 600; color: Theme.text_muted; vertical-alignment: center; }
+                            Text { width: 180px; text: "OBSERVED VARIATION"; font-size: 11px; font-weight: 600; color: Theme.text_muted; vertical-alignment: center; }
+                        }
+                    }
+
+                    // Diff rows
+                    for entry in root.diff_entries : Rectangle {
+                        height: 38px;
+                        background: Theme.bg_card;
+                        border-radius: Theme.radius_sm;
+                        border-width: 1px;
+                        border-color: Theme.border_subtle;
+
+                        HorizontalLayout {
+                            padding-left: 10px; padding-right: 10px;
+                            alignment: space-between;
+
+                            Text {
+                                horizontal-stretch: 1;
+                                text: entry.path;
+                                font-size: 12px;
+                                font-weight: 500;
+                                color: Theme.text_primary;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                            HorizontalLayout {
+                                width: 120px;
+                                alignment: start;
+                                StatusBadge {
+                                    text: entry.change_type;
+                                    variant: (entry.change_type == "identical") ? "exact" :
+                                             (entry.change_type == "metadata_drift") ? "norm" : "warn";
+                                }
+                            }
+                            Text {
+                                width: 180px;
+                                text: entry.detail;
+                                font-size: 11px;
+                                color: Theme.text_dim;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Right: Diagnostic Rule Evidence Trail
+            Rectangle {
+                horizontal-stretch: 2;
+                height: 440px;
+                background: Theme.bg_secondary;
+                border-radius: Theme.radius_md;
+                border-width: 1px;
+                border-color: Theme.border_subtle;
+
+                VerticalLayout {
+                    padding: 14px;
+                    spacing: 12px;
+
+                    Text {
+                        text: "Diagnostic Evidence Trail";
+                        font-size: 13px;
+                        font-weight: 600;
+                        color: Theme.text_primary;
+                    }
+
+                    // Fired Rule Card
+                    Rectangle {
+                        background: Theme.bg_card;
+                        border-radius: Theme.radius_sm;
+                        border-width: 1px;
+                        border-color: Theme.status_norm_border;
+                        padding: 10px;
+
+                        VerticalLayout {
+                            spacing: 6px;
+                            HorizontalLayout {
+                                alignment: space-between;
+                                Text { text: "RULE-01: Timestamp Drift"; font-size: 12px; font-weight: 700; color: Theme.accent_cyan; }
+                                StatusBadge { text: "Observed"; variant: "norm"; }
+                            }
+                            Text {
+                                text: "Archive member file timestamps differ while normalized byte hashes match after zeroing mtime.";
+                                font-size: 11px;
+                                color: Theme.text_secondary;
+                            }
+                        }
+                    }
+
+                    // Epistemic Boundary Notice
+                    Rectangle {
+                        background: Theme.status_inconclusive_bg;
+                        border-radius: Theme.radius_sm;
+                        border-width: 1px;
+                        border-color: Theme.status_inconclusive_border;
+                        padding: 10px;
+
+                        VerticalLayout {
+                            spacing: 4px;
+                            Text { text: "Epistemic Status: Inconclusive"; font-size: 11px; font-weight: 700; color: Theme.status_inconclusive; }
+                            Text {
+                                text: "Timestamp variance alone does not establish root causality without controlled perturbation. Confounder checks active.";
+                                font-size: 10px;
+                                color: #e9d5ff;
+                            }
+                        }
+                    }
+
+                    // Remediation Guidance (Recommendation Only)
+                    Rectangle {
+                        background: Theme.bg_card;
+                        border-radius: Theme.radius_sm;
+                        padding: 10px;
+
+                        VerticalLayout {
+                            spacing: 6px;
+                            Text { text: "Recommended Remediation (Level 1):"; font-size: 11px; font-weight: 600; color: Theme.text_muted; }
+                            Text {
+                                text: "Set SOURCE_DATE_EPOCH in build environment to git commit timestamp:";
+                                font-size: 11px;
+                                color: Theme.text_secondary;
+                            }
+                            Rectangle {
+                                background: Theme.bg_primary;
+                                border-radius: 4px;
+                                padding: 6px;
+                                Text {
+                                    text: "export SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct)";
+                                    font-size: 10px;
+                                    font-weight: 600;
+                                    color: Theme.accent_cyan;
+                                }
+                            }
+                            Text {
+                                text: "Policy: Recommendation-only. No automatic code injection performed.";
+                                font-size: 10px;
+                                color: Theme.text_dim;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

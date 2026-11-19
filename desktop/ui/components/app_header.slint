@@ -1,0 +1,169 @@
+import { Theme } from "../theme.slint";
+
+export component AppHeader inherits Rectangle {
+    in property <string> engine_status: "Engine Connected (PID 4820)";
+    in property <string> active_backend: "Hardware (Skia/Femtovg)";
+    in property <bool> is_software_renderer: false;
+    in property <bool> motion_enabled: true;
+
+    callback refresh_clicked();
+    callback about_clicked();
+
+    height: 48px;
+    background: Theme.bg_secondary;
+    border-width: 1px;
+    border-color: Theme.border_subtle;
+
+    HorizontalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        alignment: space-between;
+
+        // Left: Branding & Status Badges
+        HorizontalLayout {
+            spacing: 12px;
+            alignment: start;
+
+            // Brand
+            HorizontalLayout {
+                spacing: 8px;
+                Text {
+                    text: "ReproForge";
+                    font-size: 16px;
+                    font-weight: 700;
+                    color: Theme.accent_cyan;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: "v0.1.0";
+                    font-size: 11px;
+                    color: Theme.text_dim;
+                    vertical-alignment: center;
+                }
+            }
+
+            // Engine Connection Pill
+            Rectangle {
+                height: 24px;
+                border-radius: Theme.radius_full;
+                background: Theme.status_exact_bg;
+                border-width: 1px;
+                border-color: Theme.status_exact_border;
+
+                HorizontalLayout {
+                    padding-left: 10px;
+                    padding-right: 10px;
+                    alignment: center;
+                    Text {
+                        text: root.engine_status;
+                        font-size: 11px;
+                        font-weight: 600;
+                        color: #a7f3d0;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+
+            // Active Renderer Badge
+            Rectangle {
+                height: 24px;
+                border-radius: Theme.radius_full;
+                background: root.is_software_renderer ? Theme.status_warn_bg : Theme.bg_card;
+                border-width: 1px;
+                border-color: root.is_software_renderer ? Theme.status_warn_border : Theme.border_light;
+
+                HorizontalLayout {
+                    padding-left: 10px;
+                    padding-right: 10px;
+                    alignment: center;
+                    Text {
+                        text: "Renderer: " + root.active_backend;
+                        font-size: 11px;
+                        font-weight: 600;
+                        color: root.is_software_renderer ? Theme.status_warn : Theme.accent_cyan;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+
+        // Right: Motion Pill & Actions
+        HorizontalLayout {
+            spacing: 10px;
+            alignment: end;
+
+            // OS Motion Pill
+            Rectangle {
+                height: 24px;
+                border-radius: Theme.radius_full;
+                background: Theme.bg_primary;
+                border-width: 1px;
+                border-color: Theme.border_subtle;
+
+                HorizontalLayout {
+                    padding-left: 8px;
+                    padding-right: 8px;
+                    alignment: center;
+                    Text {
+                        text: root.motion_enabled ? "OS Motion: Standard" : "OS Motion: Reduced";
+                        font-size: 10px;
+                        color: Theme.text_dim;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+
+            // About Slint & ReproForge Dialog Button
+            Rectangle {
+                height: 28px;
+                border-radius: Theme.radius_sm;
+                background: about_touch.has_hover ? Theme.bg_hover : Theme.bg_card;
+                border-width: 1px;
+                border-color: Theme.border_light;
+
+                about_touch := TouchArea {
+                    clicked => { root.about_clicked(); }
+                }
+
+                HorizontalLayout {
+                    padding-left: 10px;
+                    padding-right: 10px;
+                    alignment: center;
+                    Text {
+                        text: "About / Licenses";
+                        font-size: 11px;
+                        font-weight: 500;
+                        color: Theme.text_secondary;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+
+            // Refresh Button
+            Rectangle {
+                height: 28px;
+                border-radius: Theme.radius_sm;
+                background: refresh_touch.has_hover ? Theme.bg_hover : Theme.bg_card;
+                border-width: 1px;
+                border-color: Theme.accent_cyan;
+
+                refresh_touch := TouchArea {
+                    clicked => { root.refresh_clicked(); }
+                }
+
+                HorizontalLayout {
+                    padding-left: 12px;
+                    padding-right: 12px;
+                    alignment: center;
+                    Text {
+                        text: "Refresh (Ctrl+R)";
+                        font-size: 11px;
+                        font-weight: 600;
+                        color: Theme.accent_cyan;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+    }
+}

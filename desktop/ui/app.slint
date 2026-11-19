@@ -1,0 +1,175 @@
+import { Theme } from "theme.slint";
+import { AppHeader } from "components/app_header.slint";
+import { Sidebar } from "components/sidebar.slint";
+import { AboutModal } from "components/about_modal.slint";
+import { OverviewView, RecentBuildItem } from "views/overview.slint";
+import { RepositoriesView, RepoItem, RevisionItem } from "views/repos.slint";
+import { BuildsView, BuildRowData } from "views/builds.slint";
+import { DiagnosticsView, DiffEntry } from "views/diagnostics.slint";
+import { SettingsView } from "views/settings.slint";
+
+export { BuildRowData, RepoItem, RevisionItem, RecentBuildItem, DiffEntry }
+
+export component MainWindow inherits Window {
+    title: "ReproForge — Build Reproducibility Framework";
+    preferred-width: 1180px;
+    preferred-height: 760px;
+    min-width: 960px;
+    min-height: 640px;
+    background: Theme.bg_primary;
+
+    // View Routing State
+    in-out property <int> active_tab: 0;
+
+    // Global Telemetry State
+    in property <string> engine_status: "Engine Connected (PID 4820)";
+    in property <string> active_backend: "Hardware (Skia/Femtovg)";
+    in property <bool> is_software_renderer: false;
+    in-out property <bool> motion_enabled: true;
+    in property <bool> is_loading: false;
+    in property <float> shimmer_pos: 0.5;
+    in-out property <bool> is_about_open: false;
+
+    // Overview Properties
+    in property <string> total_builds: "200";
+    in property <string> bit_for_bit_rate: "85.4%";
+    in property <string> normalized_rate: "96.2%";
+    in property <string> unresolved_count: "14";
+    in property <[RecentBuildItem]> recent_builds: [];
+
+    // Repositories Properties
+    in property <[RepoItem]> repositories: [];
+    in property <int> selected_repo_index: 0;
+    in property <[RevisionItem]> revisions: [];
+
+    // Builds Properties
+    in property <[BuildRowData]> build_rows: [];
+    in property <int> builds_total_count: 200;
+    in property <int> builds_filtered_count: 200;
+    in property <string> selected_build_id: "";
+    in property <string> selected_commit_sha: "";
+    in property <string> selected_backend: "";
+    in property <string> selected_verdict: "";
+    in property <string> selected_hash: "";
+
+    // Diagnostics Properties
+    in property <string> diag_target_a: "bld-rec-00001 (Host Win11)";
+    in property <string> diag_target_b: "bld-rec-00002 (Host Ubuntu24)";
+    in property <string> diag_verdict: "normalized_reproducible";
+    in property <string> diag_cri: "0.88";
+    in property <[DiffEntry]> diff_entries: [];
+
+    // Callbacks to Native Rust Host
+    callback refresh_requested();
+    callback search_query_changed(string);
+    callback verdict_filter_changed(int);
+    callback build_row_clicked(int);
+    callback repo_clicked(int);
+
+    // Keyboard Shortcuts Interceptor
+    forward-focus: key_handler;
+    key_handler := FocusScope {
+        key-pressed(event) => {
+            if (event.modifiers.control) {
+                if (event.text == "1") { root.active_tab = 0; return accept; }
+                if (event.text == "2") { root.active_tab = 1; return accept; }
+                if (event.text == "3") { root.active_tab = 2; return accept; }
+                if (event.text == "4") { root.active_tab = 3; return accept; }
+                if (event.text == "5") { root.active_tab = 4; return accept; }
+                if (event.text == "r") { root.refresh_requested(); return accept; }
+            }
+            if (event.text == "Escape" && root.is_about_open) {
+                root.is_about_open = false;
+                return accept;
+            }
+            return reject;
+        }
+    }
+
+    VerticalLayout {
+        padding: 0px;
+        spacing: 0px;
+
+        // 1. Top Integrated App Header
+        AppHeader {
+            engine_status: root.engine_status;
+            active_backend: root.active_backend;
+            is_software_renderer: root.is_software_renderer;
+            motion_enabled: root.motion_enabled;
+            refresh_clicked => { root.refresh_requested(); }
+            about_clicked => { root.is_about_open = true; }
+        }
+
+        // 2. Main Workspace Layout
+        HorizontalLayout {
+            padding: 0px;
+            spacing: 0px;
+
+            // Sidebar
+            Sidebar {
+                active_index: root.active_tab;
+                tab_selected(idx) => { root.active_tab = idx; }
+            }
+
+            // View Deck Container
+            Rectangle {
+                background: Theme.bg_primary;
+                clip: true;
+
+                if root.active_tab == 0 : OverviewView {
+                    total_builds: root.total_builds;
+                    bit_for_bit_rate: root.bit_for_bit_rate;
+                    normalized_rate: root.normalized_rate;
+                    unresolved_count: root.unresolved_count;
+                    is_loading: root.is_loading;
+                    motion_enabled: root.motion_enabled;
+                    shimmer_progress: root.shimmer_pos;
+                    recent_builds: root.recent_builds;
+                }
+
+                if root.active_tab == 1 : RepositoriesView {
+                    repositories: root.repositories;
+                    selected_repo_index: root.selected_repo_index;
+                    revisions: root.revisions;
+                    repo_selected(idx) => { root.repo_clicked(idx); }
+                }
+
+                if root.active_tab == 2 : BuildsView {
+                    build_rows: root.build_rows;
+                    total_count: root.builds_total_count;
+                    filtered_count: root.builds_filtered_count;
+                    selected_build_id: root.selected_build_id;
+                    selected_commit_sha: root.selected_commit_sha;
+                    selected_backend: root.selected_backend;
+                    selected_verdict: root.selected_verdict;
+                    selected_hash: root.selected_hash;
+                    search_changed(q) => { root.search_query_changed(q); }
+                    verdict_filter_changed(f) => { root.verdict_filter_changed(f); }
+                    row_selected(idx) => { root.build_row_clicked(idx); }
+                }
+
+                if root.active_tab == 3 : DiagnosticsView {
+                    target_a: root.diag_target_a;
+                    target_b: root.diag_target_b;
+                    primary_verdict: root.diag_verdict;
+                    cri_score: root.diag_cri;
+                    diff_entries: root.diff_entries;
+                }
+
+                if root.active_tab == 4 : SettingsView {
+                    motion_enabled: root.motion_enabled;
+                    active_backend: root.active_backend;
+                    is_software_renderer: root.is_software_renderer;
+                    toggle_motion => { root.motion_enabled = !root.motion_enabled; }
+                    show_about_clicked => { root.is_about_open = true; }
+                }
+            }
+        }
+    }
+
+    // Modal Overlays
+    AboutModal {
+        is_open: root.is_about_open;
+        close_clicked => { root.is_about_open = false; }
+    }
+}

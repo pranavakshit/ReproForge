@@ -1,0 +1,279 @@
+import { Theme } from "../theme.slint";
+import { MetricCard } from "../components/metric_card.slint";
+import { StatusBadge } from "../components/status_badge.slint";
+
+export struct RecentBuildItem {
+    build_id: string,
+    commit_sha: string,
+    backend: string,
+    status: string,
+    verdict: string,
+    duration: string,
+}
+
+export component OverviewView inherits Rectangle {
+    in property <string> total_builds: "200";
+    in property <string> bit_for_bit_rate: "85.4%";
+    in property <string> normalized_rate: "96.2%";
+    in property <string> unresolved_count: "14";
+    in property <bool> is_loading: false;
+    in property <bool> motion_enabled: true;
+    in property <float> shimmer_progress: 0.0;
+    in property <[RecentBuildItem]> recent_builds: [];
+
+    background: Theme.bg_primary;
+
+    VerticalLayout {
+        padding: 20px;
+        spacing: 16px;
+        alignment: start;
+
+        // View Header
+        HorizontalLayout {
+            alignment: space-between;
+            HorizontalLayout {
+                spacing: 10px;
+                Text {
+                    text: "Reproducibility Overview Dashboard";
+                    font-size: 18px;
+                    font-weight: 700;
+                    color: Theme.text_primary;
+                    vertical-alignment: center;
+                }
+                Rectangle {
+                    height: 20px;
+                    border-radius: Theme.radius_sm;
+                    background: Theme.bg_card;
+                    border-width: 1px;
+                    border-color: Theme.border_light;
+                    HorizontalLayout {
+                        padding-left: 6px; padding-right: 6px; alignment: center;
+                        Text { text: "Mock Telemetry"; font-size: 10px; font-weight: 600; color: Theme.accent_cyan; vertical-alignment: center; }
+                    }
+                }
+            }
+        }
+
+        // 4 Metric Cards
+        HorizontalLayout {
+            spacing: 14px;
+            height: 96px;
+
+            MetricCard {
+                title: "TOTAL VERIFIED BUILDS";
+                value: root.total_builds;
+                subtitle: "Across Docker & BuildKit targets";
+                value_color: Theme.text_primary;
+                is_loading: root.is_loading;
+                motion_enabled: root.motion_enabled;
+                shimmer_progress: root.shimmer_progress;
+            }
+
+            MetricCard {
+                title: "BIT-FOR-BIT RATE (S_exact)";
+                value: root.bit_for_bit_rate;
+                subtitle: "Cryptographic hash match";
+                value_color: Theme.status_exact;
+                is_loading: root.is_loading;
+                motion_enabled: root.motion_enabled;
+                shimmer_progress: root.shimmer_progress;
+            }
+
+            MetricCard {
+                title: "NORMALIZED RATE (S_norm)";
+                value: root.normalized_rate;
+                subtitle: "Metadata-invariant equivalence";
+                value_color: Theme.accent_cyan;
+                is_loading: root.is_loading;
+                motion_enabled: root.motion_enabled;
+                shimmer_progress: root.shimmer_progress;
+            }
+
+            MetricCard {
+                title: "UNRESOLVED DRIFT (N_unexp)";
+                value: root.unresolved_count;
+                subtitle: "Discrepancies requiring review";
+                value_color: Theme.status_warn;
+                is_loading: root.is_loading;
+                motion_enabled: root.motion_enabled;
+                shimmer_progress: root.shimmer_progress;
+            }
+        }
+
+        // Split Panel: Recent Executions + Host Platform Fingerprint
+        HorizontalLayout {
+            spacing: 14px;
+
+            // Left: Recent Build Runs
+            Rectangle {
+                horizontal-stretch: 3;
+                height: 380px;
+                background: Theme.bg_secondary;
+                border-radius: Theme.radius_md;
+                border-width: 1px;
+                border-color: Theme.border_subtle;
+
+                VerticalLayout {
+                    padding: 14px;
+                    spacing: 10px;
+
+                    HorizontalLayout {
+                        alignment: space-between;
+                        Text {
+                            text: "Recent Build Reproducibility Executions";
+                            font-size: 13px;
+                            font-weight: 600;
+                            color: Theme.text_primary;
+                        }
+                        Text {
+                            text: "Latest 8 runs";
+                            font-size: 11px;
+                            color: Theme.text_dim;
+                        }
+                    }
+
+                    // Table Header
+                    Rectangle {
+                        height: 28px;
+                        background: Theme.bg_elevated;
+                        border-radius: Theme.radius_sm;
+                        HorizontalLayout {
+                            padding-left: 10px; padding-right: 10px;
+                            Text { width: 110px; text: "BUILD ID"; font-size: 11px; font-weight: 600; color: Theme.text_muted; vertical-alignment: center; }
+                            Text { width: 90px; text: "COMMIT"; font-size: 11px; font-weight: 600; color: Theme.text_muted; vertical-alignment: center; }
+                            Text { width: 80px; text: "BACKEND"; font-size: 11px; font-weight: 600; color: Theme.text_muted; vertical-alignment: center; }
+                            Text { width: 80px; text: "STATUS"; font-size: 11px; font-weight: 600; color: Theme.text_muted; vertical-alignment: center; }
+                            Text { horizontal-stretch: 1; text: "CATEGORICAL VERDICT"; font-size: 11px; font-weight: 600; color: Theme.text_muted; vertical-alignment: center; }
+                            Text { width: 60px; text: "TIME"; font-size: 11px; font-weight: 600; color: Theme.text_muted; vertical-alignment: center; }
+                        }
+                    }
+
+                    // Recent rows
+                    for item in root.recent_builds : Rectangle {
+                        height: 34px;
+                        background: Theme.bg_card;
+                        border-radius: Theme.radius_sm;
+                        border-width: 1px;
+                        border-color: Theme.border_subtle;
+
+                        HorizontalLayout {
+                            padding-left: 10px; padding-right: 10px;
+                            Text { width: 110px; text: item.build_id; font-size: 12px; font-weight: 500; color: Theme.text_primary; vertical-alignment: center; }
+                            Text { width: 90px; text: item.commit_sha; font-size: 11px; color: Theme.text_secondary; vertical-alignment: center; }
+                            Text { width: 80px; text: item.backend; font-size: 11px; color: Theme.text_muted; vertical-alignment: center; }
+                            Text {
+                                width: 80px;
+                                text: item.status;
+                                font-size: 11px;
+                                font-weight: 600;
+                                color: (item.status == "completed") ? Theme.status_exact : Theme.status_fail;
+                                vertical-alignment: center;
+                            }
+                            HorizontalLayout {
+                                horizontal-stretch: 1;
+                                alignment: start;
+                                StatusBadge {
+                                    text: item.verdict;
+                                    variant: (item.verdict == "bit_for_bit_reproducible") ? "exact" :
+                                             (item.verdict == "normalized_reproducible") ? "norm" :
+                                             (item.verdict == "inconclusive") ? "inconclusive" : "warn";
+                                }
+                            }
+                            Text { width: 60px; text: item.duration; font-size: 11px; color: Theme.text_dim; vertical-alignment: center; }
+                        }
+                    }
+                }
+            }
+
+            // Right: Host Platform Fingerprint & System Health
+            Rectangle {
+                horizontal-stretch: 2;
+                height: 380px;
+                background: Theme.bg_secondary;
+                border-radius: Theme.radius_md;
+                border-width: 1px;
+                border-color: Theme.border_subtle;
+
+                VerticalLayout {
+                    padding: 14px;
+                    spacing: 12px;
+
+                    Text {
+                        text: "Host Platform Fingerprint";
+                        font-size: 13px;
+                        font-weight: 600;
+                        color: Theme.text_primary;
+                    }
+
+                    // Fingerprint attributes
+                    Rectangle {
+                        background: Theme.bg_card;
+                        border-radius: Theme.radius_sm;
+                        padding: 10px;
+                        VerticalLayout {
+                            spacing: 8px;
+                            HorizontalLayout {
+                                Text { text: "OS Platform:"; font-size: 11px; color: Theme.text_muted; width: 110px; }
+                                Text { text: "Windows 11 Home 24H2 (x86_64)"; font-size: 11px; font-weight: 600; color: Theme.text_primary; }
+                            }
+                            HorizontalLayout {
+                                Text { text: "Python Core:"; font-size: 11px; color: Theme.text_muted; width: 110px; }
+                                Text { text: "3.14.7 (.venv verified)"; font-size: 11px; font-weight: 600; color: Theme.accent_cyan; }
+                            }
+                            HorizontalLayout {
+                                Text { text: "Persistence:"; font-size: 11px; color: Theme.text_muted; width: 110px; }
+                                Text { text: "SQLite 3 (WAL mode, busy_timeout=5s)"; font-size: 11px; color: Theme.status_exact; }
+                            }
+                            HorizontalLayout {
+                                Text { text: "Container Runtimes:"; font-size: 11px; color: Theme.text_muted; width: 110px; }
+                                Text { text: "Docker Desktop 27.x / BuildKit v0.15"; font-size: 11px; color: Theme.text_primary; }
+                            }
+                            HorizontalLayout {
+                                Text { text: "Hashing Engine:"; font-size: 11px; color: Theme.text_muted; width: 110px; }
+                                Text { text: "Streaming SHA-256 + BLAKE2b"; font-size: 11px; color: Theme.text_secondary; }
+                            }
+                        }
+                    }
+
+                    Text {
+                        text: "Epistemic Assessment Summary";
+                        font-size: 13px;
+                        font-weight: 600;
+                        color: Theme.text_primary;
+                        padding-top: 6px;
+                    }
+
+                    Rectangle {
+                        background: Theme.bg_card;
+                        border-radius: Theme.radius_sm;
+                        padding: 10px;
+                        VerticalLayout {
+                            spacing: 6px;
+                            Text {
+                                text: "Rule Classification Policy:";
+                                font-size: 11px;
+                                font-weight: 600;
+                                color: Theme.text_secondary;
+                            }
+                            Text {
+                                text: "• 11 Diagnostic rules strictly active with confounder checks.";
+                                font-size: 11px;
+                                color: Theme.text_dim;
+                            }
+                            Text {
+                                text: "• Fallback to INCONCLUSIVE when observations are ambiguous.";
+                                font-size: 11px;
+                                color: Theme.text_dim;
+                            }
+                            Text {
+                                text: "• Recommendation-only: No automatic repository mutation.";
+                                font-size: 11px;
+                                color: Theme.text_dim;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

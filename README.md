@@ -82,6 +82,27 @@ See [architecture.puml](architecture.puml) for the complete PlantUML component d
    alembic upgrade head
    ```
 
+### Native Desktop Application (Slint UI)
+The desktop client is located in `desktop/` and built with Slint v1.19.0.
+
+1. Build and run in Hardware-Accelerated mode (default):
+   ```powershell
+   cargo run --release --manifest-path desktop/Cargo.toml
+   ```
+
+2. Run with Software Rasterizer Fallback (for environments without compatible GPUs or display drivers):
+   ```powershell
+   cargo run --release --manifest-path desktop/Cargo.toml -- --renderer=software
+   # or via environment variable:
+   $env:SLINT_BACKEND="software"
+   .\desktop\target\release\reproforge_desktop.exe
+   ```
+
+3. Benchmark permanent desktop application footprint:
+   ```powershell
+   .\.venv\Scripts\python.exe desktop/benchmarks/run_desktop_bench.py
+   ```
+
 ---
 
 ## 5. Running Tests
@@ -101,8 +122,8 @@ Execute the automated test suite with coverage reporting:
 - [x] **Phase 3: Artifact Analysis & Normalization Framework** (Multi-hasher, Unpacker, OCI Inspector, Dual-Mode Normalizer, Diff Engine)
 - [x] **Phase 4: Diagnostic Engine & Reproducibility Scoring** (11 tightened rules, evidence bundle with epistemic status, 3-tier remediation, CRI & multi-dimensional verdict)
 - [x] **Phase 5A: Shared Application Services & Durable Persistence** (Async Repositories, SQLite WAL Pragmas, Crash Recovery, Service Layer, CLI Refactor)
-- [ ] **Milestone B: Slint vs. Iced Minimal Prototype Benchmarking**
-- [ ] **Milestone C: Desktop Framework Selection & UI Shell Foundation**
+- [x] **Milestone B: Slint vs. Iced Minimal Prototype Benchmarking** (Empirical release benchmarks, WGPU vs Tiny-Skia, 50k scaling, first-frame presentation)
+- [x] **Milestone C: Desktop Framework Selection & UI Shell Foundation** (Slint v1.19.0 permanent client, 5 interactive views, DPI-safe native window management, hardware & software fallback)
 - [ ] **Milestone D: Local Structured JSONL IPC Daemon & Process Supervision**
 - [ ] **Milestone E: Desktop Overview, Repository & Build Screens**
 - [ ] **Milestone F: Comparison, Diagnostics & Causality Graph Screens**
