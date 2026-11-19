@@ -1,50 +1,167 @@
 {
-  "slint": {
-    "framework": "Slint",
-    "binary_size_mb": 10.33,
-    "startup_ms": {
-      "avg_ms": 12.3,
-      "min_ms": 9.0,
-      "max_ms": 24.9
+  "baseline_200": {
+    "slint": {
+      "framework": "Slint",
+      "records_count": 200,
+      "binary_size_mb": 10.34,
+      "first_frame_presentation_ms": {
+        "avg_ms": 229.8,
+        "min_ms": 226.4,
+        "max_ms": 237.4
+      },
+      "idle_telemetry": {
+        "avg_ram_mb": 113.82,
+        "min_ram_mb": 113.82,
+        "max_ram_mb": 113.82,
+        "avg_cpu_percent": 0.0,
+        "samples_count": 8
+      }
     },
-    "idle_telemetry": {
-      "avg_ram_mb": 113.84,
-      "min_ram_mb": 113.83,
-      "max_ram_mb": 113.84,
-      "avg_cpu_percent": 0.32,
-      "samples_count": 20
+    "iced_wgpu": {
+      "framework": "Iced (WGPU)",
+      "records_count": 200,
+      "binary_size_mb": 7.11,
+      "first_frame_presentation_ms": {
+        "avg_ms": 662.4,
+        "min_ms": 643.1,
+        "max_ms": 715.9
+      },
+      "idle_telemetry": {
+        "avg_ram_mb": 223.1,
+        "min_ram_mb": 223.04,
+        "max_ram_mb": 223.11,
+        "avg_cpu_percent": 0.39,
+        "samples_count": 8
+      }
+    },
+    "iced_tiny_skia": {
+      "framework": "Iced (Tiny-Skia)",
+      "records_count": 200,
+      "binary_size_mb": 7.11,
+      "first_frame_presentation_ms": {
+        "avg_ms": 30.1,
+        "min_ms": 28.2,
+        "max_ms": 31.0
+      },
+      "idle_telemetry": {
+        "avg_ram_mb": 36.87,
+        "min_ram_mb": 36.87,
+        "max_ram_mb": 36.87,
+        "avg_cpu_percent": 0.0,
+        "samples_count": 8
+      }
     }
   },
-  "iced": {
-    "framework": "Iced (wgpu)",
-    "binary_size_mb": 7.1,
-    "startup_ms": {
-      "avg_ms": 11.7,
-      "min_ms": 8.6,
-      "max_ms": 23.0
+  "scaling_10000": {
+    "slint": {
+      "framework": "Slint",
+      "records_count": 10000,
+      "binary_size_mb": 10.34,
+      "first_frame_presentation_ms": {
+        "avg_ms": 278.7,
+        "min_ms": 235.7,
+        "max_ms": 349.4
+      },
+      "idle_telemetry": {
+        "avg_ram_mb": 117.03,
+        "min_ram_mb": 117.03,
+        "max_ram_mb": 117.03,
+        "avg_cpu_percent": 0.0,
+        "samples_count": 8
+      }
     },
-    "idle_telemetry": {
-      "avg_ram_mb": 276.01,
-      "min_ram_mb": 275.95,
-      "max_ram_mb": 276.02,
-      "avg_cpu_percent": 0.4,
-      "samples_count": 20
+    "iced_wgpu": {
+      "framework": "Iced (WGPU)",
+      "records_count": 10000,
+      "binary_size_mb": 7.11,
+      "first_frame_presentation_ms": {
+        "avg_ms": 668.4,
+        "min_ms": 637.1,
+        "max_ms": 721.5
+      },
+      "idle_telemetry": {
+        "avg_ram_mb": 224.84,
+        "min_ram_mb": 224.79,
+        "max_ram_mb": 224.85,
+        "avg_cpu_percent": 1.55,
+        "samples_count": 8
+      }
+    },
+    "iced_tiny_skia": {
+      "framework": "Iced (Tiny-Skia)",
+      "records_count": 10000,
+      "binary_size_mb": 7.11,
+      "first_frame_presentation_ms": {
+        "avg_ms": 33.6,
+        "min_ms": 31.8,
+        "max_ms": 37.4
+      },
+      "idle_telemetry": {
+        "avg_ram_mb": 39.54,
+        "min_ram_mb": 39.54,
+        "max_ram_mb": 39.54,
+        "avg_cpu_percent": 0.0,
+        "samples_count": 8
+      }
     }
   },
-  "iced_tiny_skia": {
-    "framework": "Iced (tiny-skia)",
-    "binary_size_mb": 2.9,
-    "startup_ms": {
-      "avg_ms": 14.3,
-      "min_ms": 9.1,
-      "max_ms": 21.6
+  "scaling_50000": {
+    "slint": {
+      "framework": "Slint",
+      "records_count": 50000,
+      "binary_size_mb": 10.34,
+      "first_frame_presentation_ms": {
+        "avg_ms": 267.7,
+        "min_ms": 265.8,
+        "max_ms": 270.1
+      },
+      "idle_telemetry": {
+        "avg_ram_mb": 130.65,
+        "min_ram_mb": 130.65,
+        "max_ram_mb": 130.65,
+        "avg_cpu_percent": 0.0,
+        "samples_count": 8
+      }
     },
-    "idle_telemetry": {
-      "avg_ram_mb": 41.43,
-      "min_ram_mb": 41.31,
-      "max_ram_mb": 41.43,
-      "avg_cpu_percent": 0.0,
-      "samples_count": 20
+    "iced_wgpu": {
+      "framework": "Iced (WGPU)",
+      "records_count": 50000,
+      "binary_size_mb": 7.11,
+      "first_frame_presentation_ms": {
+        "avg_ms": 669.0,
+        "min_ms": 639.4,
+        "max_ms": 728.4
+      },
+      "idle_telemetry": {
+        "avg_ram_mb": 235.61,
+        "min_ram_mb": 235.55,
+        "max_ram_mb": 235.62,
+        "avg_cpu_percent": 0.39,
+        "samples_count": 8
+      }
+    },
+    "iced_tiny_skia": {
+      "framework": "Iced (Tiny-Skia)",
+      "records_count": 50000,
+      "binary_size_mb": 7.11,
+      "first_frame_presentation_ms": {
+        "avg_ms": 42.7,
+        "min_ms": 40.6,
+        "max_ms": 45.3
+      },
+      "idle_telemetry": {
+        "avg_ram_mb": 49.93,
+        "min_ram_mb": 49.93,
+        "max_ram_mb": 49.93,
+        "avg_cpu_percent": 0.0,
+        "samples_count": 8
+      }
     }
+  },
+  "gpu_fallback_verification": {
+    "fallback_successful": true,
+    "active_backend_line": "ICED_BACKEND_ACTIVE: Tiny-Skia (GPU Fallback)",
+    "first_frame_signal": "FIRST_FRAME_PRESENTED",
+    "fallback_idle_ram_mb": 37.0
   }
 }

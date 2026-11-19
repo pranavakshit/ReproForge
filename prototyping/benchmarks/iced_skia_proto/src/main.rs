@@ -46,7 +46,45 @@ fn is_system_animation_enabled() -> bool {
     true
 }
 
+fn generate_mock_dataset(n: usize) -> MockDataset {
+    let mut builds = Vec::with_capacity(n);
+    let backends = ["docker", "podman", "buildkit"];
+    let verdicts = [
+        "bit_for_bit_reproducible",
+        "normalized_reproducible",
+        "partially_reproducible",
+        "inconclusive",
+    ];
+
+    for i in 0..n {
+        builds.push(MockBuildRow {
+            build_id: format!("bld-rec-{:05}", i + 1),
+            commit_sha: format!("{:07x}f4", (i * 7919) & 0x0fffffff),
+            backend: backends[i % backends.len()].to_string(),
+            status: if i % 17 == 0 { "failed".to_string() } else { "completed".to_string() },
+            verdict: verdicts[i % verdicts.len()].to_string(),
+            duration_seconds: 12.0 + ((i % 50) as f64) * 0.5,
+        });
+    }
+
+    MockDataset {
+        summary_metrics: SummaryMetrics {
+            total_builds: n,
+            bit_for_bit_rate: 85.4,
+            normalized_rate: 96.2,
+            unresolved_count: 14,
+        },
+        builds,
+    }
+}
+
 fn load_mock_data() -> Option<MockDataset> {
+    if let Ok(count_str) = std::env::var("REPROFORGE_BENCH_RECORDS") {
+        if let Ok(n) = count_str.parse::<usize>() {
+            return Some(generate_mock_dataset(n));
+        }
+    }
+
     let candidate_paths = [
         "data/mock_builds.json",
         "../data/mock_builds.json",
@@ -63,27 +101,52 @@ fn load_mock_data() -> Option<MockDataset> {
             }
         }
     }
-    None
+    Some(generate_mock_dataset(200))
+}
+
+fn detect_active_backend() -> &'static str {
+    if let Ok(val) = std::env::var("ICED_BACKEND") {
+        if val == "tiny-skia" {
+            return "Tiny-Skia (Software)";
+        }
+    }
+    if let Ok(val) = std::env::var("WGPU_BACKEND") {
+        if val == "empty" {
+            return "Tiny-Skia (GPU Fallback)";
+        }
+    }
+    "WGPU (DirectX 12)"
 }
 
 #[derive(Debug, Clone)]
 enum Message {
     Refresh,
     TabSelected(String),
+    TableScrolled(scrollable::Viewport),
+    FirstFrameTick,
 }
 
 struct ReproForgeApp {
     dataset: Option<MockDataset>,
     motion_enabled: bool,
     active_tab: String,
+    scroll_y: f32,
+    backend_name: &'static str,
 }
 
 impl Default for ReproForgeApp {
     fn default() -> Self {
+        let backend = detect_active_backend();
+        println!("ICED_BACKEND_ACTIVE: {}", backend);
+        use std::io::Write;
+        std::io::stdout().flush().ok();
+
         Self {
             dataset: load_mock_data(),
             motion_enabled: is_system_animation_enabled(),
             active_tab: "Dashboard".into(),
+            scroll_y: 0.0,
+            backend_name: backend,
         }
     }
 }
@@ -97,7 +160,28 @@ impl ReproForgeApp {
             Message::TabSelected(tab) => {
                 self.active_tab = tab;
             }
+            Message::TableScrolled(viewport) => {
+                self.scroll_y = viewport.absolute_offset().y;
+            }
+            Message::FirstFrameTick => {
+                static FIRST_FRAME_REPORTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+                if !FIRST_FRAME_REPORTED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                    use std::io::Write;
+                    println!("FIRST_FRAME_PRESENTED");
+                    std::io::stdout().flush().ok();
+                }
+            }
         }
+    }
+
+    fn subscription(&self) -> iced::Subscription<Message> {
+        iced::event::listen_with(|event, _status, _window| {
+            if let iced::Event::Window(iced::window::Event::RedrawRequested(_)) = event {
+                Some(Message::FirstFrameTick)
+            } else {
+                None
+            }
+        })
     }
 
     fn theme(&self) -> Theme {
@@ -105,13 +189,21 @@ impl ReproForgeApp {
     }
 
     fn view(&self) -> Element<'_, Message> {
+        // Fallback emission if subscription has not yet triggered RedrawRequested
+        static VIEW_FIRST_FRAME: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        if !VIEW_FIRST_FRAME.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            use std::io::Write;
+            println!("FIRST_FRAME_PRESENTED");
+            std::io::stdout().flush().ok();
+        }
+
         // --- 1. Custom Titlebar ---
         let brand = row![
             text("ReproForge").size(16).color(Color::from_rgb(0.22, 0.74, 0.97)),
             text("v0.1.0").size(11).color(Color::from_rgb(0.39, 0.45, 0.55)),
             container(
                 row![
-                    text("Engine Connected (PID 4820)")
+                    text(format!("Engine Connected (PID {}) | Backend: {}", std::process::id(), self.backend_name))
                         .size(11)
                         .color(Color::from_rgb(0.65, 0.95, 0.82))
                 ]
@@ -202,11 +294,26 @@ impl ReproForgeApp {
 
         let cards_row = row![card1, card2, card3, card4].spacing(14);
 
-        // --- 4. Build Table ---
+        // --- 4. Virtualized Build Table ---
         let mut table_rows = column![].spacing(2);
 
         if let Some(dataset) = &self.dataset {
-            for row_data in &dataset.builds {
+            let total_rows = dataset.builds.len();
+            let row_height: f32 = 38.0;
+            let visible_count: usize = 20;
+
+            let start_idx = (self.scroll_y / row_height).floor().max(0.0) as usize;
+            let start_idx = start_idx.min(total_rows.saturating_sub(1));
+            let end_idx = (start_idx + visible_count).min(total_rows);
+
+            let top_spacer_height = start_idx as f32 * row_height;
+            let bottom_spacer_height = (total_rows.saturating_sub(end_idx)) as f32 * row_height;
+
+            if top_spacer_height > 0.0 {
+                table_rows = table_rows.push(Space::new().height(Length::Fixed(top_spacer_height)));
+            }
+
+            for row_data in &dataset.builds[start_idx..end_idx] {
                 let verdict_color = match row_data.verdict.as_str() {
                     "bit_for_bit_reproducible" => Color::from_rgb(0.06, 0.73, 0.51),
                     "normalized_reproducible" => Color::from_rgb(0.22, 0.74, 0.97),
@@ -241,6 +348,10 @@ impl ReproForgeApp {
 
                 table_rows = table_rows.push(row_item);
             }
+
+            if bottom_spacer_height > 0.0 {
+                table_rows = table_rows.push(Space::new().height(Length::Fixed(bottom_spacer_height)));
+            }
         }
 
         let table_header = container(
@@ -264,7 +375,13 @@ impl ReproForgeApp {
         });
 
         let table_section = container(
-            column![table_header, scrollable(table_rows).height(Length::Fill)].spacing(8)
+            column![
+                table_header,
+                scrollable(table_rows)
+                    .on_scroll(Message::TableScrolled)
+                    .height(Length::Fill)
+            ]
+            .spacing(8)
         )
         .padding(12)
         .height(Length::Fill)
@@ -342,6 +459,7 @@ pub fn main() -> iced::Result {
         ReproForgeApp::update,
         ReproForgeApp::view,
     )
+    .subscription(ReproForgeApp::subscription)
     .title(app_title)
     .theme(ReproForgeApp::theme)
     .run()

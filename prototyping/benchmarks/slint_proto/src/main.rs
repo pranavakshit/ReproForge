@@ -49,7 +49,45 @@ fn is_system_animation_enabled() -> bool {
     true
 }
 
+fn generate_mock_dataset(n: usize) -> MockDataset {
+    let mut builds = Vec::with_capacity(n);
+    let backends = ["docker", "podman", "buildkit"];
+    let verdicts = [
+        "bit_for_bit_reproducible",
+        "normalized_reproducible",
+        "partially_reproducible",
+        "inconclusive",
+    ];
+
+    for i in 0..n {
+        builds.push(MockBuildRow {
+            build_id: format!("bld-rec-{:05}", i + 1),
+            commit_sha: format!("{:07x}f4", (i * 7919) & 0x0fffffff),
+            backend: backends[i % backends.len()].to_string(),
+            status: if i % 17 == 0 { "failed".to_string() } else { "completed".to_string() },
+            verdict: verdicts[i % verdicts.len()].to_string(),
+            duration_seconds: 12.0 + ((i % 50) as f64) * 0.5,
+        });
+    }
+
+    MockDataset {
+        summary_metrics: SummaryMetrics {
+            total_builds: n,
+            bit_for_bit_rate: 85.4,
+            normalized_rate: 96.2,
+            unresolved_count: 14,
+        },
+        builds,
+    }
+}
+
 fn load_mock_data() -> Option<MockDataset> {
+    if let Ok(count_str) = std::env::var("REPROFORGE_BENCH_RECORDS") {
+        if let Ok(n) = count_str.parse::<usize>() {
+            return Some(generate_mock_dataset(n));
+        }
+    }
+
     let candidate_paths = [
         "data/mock_builds.json",
         "../data/mock_builds.json",
@@ -66,7 +104,7 @@ fn load_mock_data() -> Option<MockDataset> {
             }
         }
     }
-    None
+    Some(generate_mock_dataset(200))
 }
 
 fn populate_ui(ui: &MainWindow, dataset: &MockDataset) {
@@ -111,6 +149,19 @@ fn main() -> Result<(), slint::PlatformError> {
             }
         }
     });
+
+    // Notify upon first-frame presentation
+    let first_frame = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let ff_clone = first_frame.clone();
+    main_window.window().set_rendering_notifier(move |state, _api| {
+        if matches!(state, slint::RenderingState::AfterRendering) {
+            if !ff_clone.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                use std::io::Write;
+                println!("FIRST_FRAME_PRESENTED");
+                std::io::stdout().flush().ok();
+            }
+        }
+    }).ok();
 
     main_window.run()
 }
