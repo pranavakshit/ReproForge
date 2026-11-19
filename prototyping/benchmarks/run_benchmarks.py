@@ -133,18 +133,28 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="ReproForge UI Benchmark Harness")
     parser.add_argument("--slint-exe", type=Path, help="Path to Slint release binary")
-    parser.add_argument("--iced-exe", type=Path, help="Path to Iced release binary")
+    parser.add_argument("--iced-exe", type=Path, help="Path to Iced (wgpu) release binary")
+    parser.add_argument("--iced-skia-exe", type=Path, help="Path to Iced (tiny-skia) release binary")
     parser.add_argument("--duration", type=int, default=15, help="Idle sampling duration in seconds")
     parser.add_argument("--output-json", type=Path, default=Path("prototyping/benchmarks/benchmark_results.json"))
 
     args = parser.parse_args()
     results = {}
+    if args.output_json.exists():
+        try:
+            with open(args.output_json, "r", encoding="utf-8") as f:
+                results = json.load(f)
+        except Exception:
+            results = {}
 
     if args.slint_exe and args.slint_exe.exists():
         results["slint"] = run_benchmark("Slint", args.slint_exe, duration_seconds=args.duration)
 
     if args.iced_exe and args.iced_exe.exists():
-        results["iced"] = run_benchmark("Iced", args.iced_exe, duration_seconds=args.duration)
+        results["iced_wgpu"] = run_benchmark("Iced (wgpu)", args.iced_exe, duration_seconds=args.duration)
+
+    if args.iced_skia_exe and args.iced_skia_exe.exists():
+        results["iced_tiny_skia"] = run_benchmark("Iced (tiny-skia)", args.iced_skia_exe, duration_seconds=args.duration)
 
     if results:
         with open(args.output_json, "w", encoding="utf-8") as f:

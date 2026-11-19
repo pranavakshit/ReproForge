@@ -16,7 +16,7 @@
     }
   },
   "iced": {
-    "framework": "Iced",
+    "framework": "Iced (wgpu)",
     "binary_size_mb": 7.1,
     "startup_ms": {
       "avg_ms": 11.7,
@@ -28,6 +28,22 @@
       "min_ram_mb": 275.95,
       "max_ram_mb": 276.02,
       "avg_cpu_percent": 0.4,
+      "samples_count": 20
+    }
+  },
+  "iced_tiny_skia": {
+    "framework": "Iced (tiny-skia)",
+    "binary_size_mb": 2.9,
+    "startup_ms": {
+      "avg_ms": 14.3,
+      "min_ms": 9.1,
+      "max_ms": 21.6
+    },
+    "idle_telemetry": {
+      "avg_ram_mb": 41.43,
+      "min_ram_mb": 41.31,
+      "max_ram_mb": 41.43,
+      "avg_cpu_percent": 0.0,
       "samples_count": 20
     }
   }
