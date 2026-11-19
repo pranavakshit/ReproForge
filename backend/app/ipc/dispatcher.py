@@ -18,6 +18,24 @@ from backend.app.services.fingerprint_service import FingerprintService
 from backend.app.services.repository_service import RepositoryService
 
 
+def _model_to_dict(model: Any) -> Dict[str, Any]:
+    if model is None:
+        return {}
+    if hasattr(model, "model_dump"):
+        return model.model_dump(mode="json")
+    if hasattr(model, "__table__"):
+        res = {}
+        for col in model.__table__.columns:
+            val = getattr(model, col.name)
+            if hasattr(val, "isoformat"):
+                val = val.isoformat()
+            res[col.name] = val
+        return res
+    if isinstance(model, dict):
+        return model
+    return {"id": str(model)}
+
+
 class RequestDispatcher:
     """Dispatches incoming JSON-RPC 2.0 requests to Phase 5A shared application services."""
 
@@ -124,7 +142,7 @@ class RequestDispatcher:
     async def _handle_fingerprint_capture(self, params: Dict[str, Any]) -> Dict[str, Any]:
         repo_id = params.get("repo_id")
         fp = await self.fingerprint_service.capture_and_persist(repo_id=repo_id)
-        return fp.model_dump(mode="json")
+        return _model_to_dict(fp)
 
     async def _handle_build_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
         repo_id = params.get("repo_id")
@@ -133,7 +151,7 @@ class RequestDispatcher:
         builds = await self.build_service.list_builds(repo_id=repo_id, limit=limit, offset=offset)
         return {
             "total_count": len(builds),
-            "builds": [b.model_dump(mode="json") for b in builds],
+            "builds": [_model_to_dict(b) for b in builds],
         }
 
     async def _handle_build_get_status(self, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -143,16 +161,18 @@ class RequestDispatcher:
         b = await self.build_service.get_build(build_id)
         if not b:
             raise ValueError(f"Build '{build_id}' not found")
-        return b.model_dump(mode="json")
+        return _model_to_dict(b)
 
     async def _handle_build_cancel(self, params: Dict[str, Any]) -> Dict[str, Any]:
         build_id = params.get("build_id")
         if not build_id:
             raise ValueError("Parameter 'build_id' is required")
         cancelled_build = await self.build_service.cancel_build(build_id)
+        if not cancelled_build:
+            raise ValueError(f"Build '{build_id}' not found or already finished")
         return {
             "cancelled": True,
-            "build": cancelled_build.model_dump(mode="json"),
+            "build": _model_to_dict(cancelled_build),
         }
 
     async def _handle_repository_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -161,5 +181,5 @@ class RequestDispatcher:
         repos = await self.repository_service.list_repositories(limit=limit, offset=offset)
         return {
             "total_count": len(repos),
-            "repositories": [r.model_dump(mode="json") for r in repos],
+            "repositories": [_model_to_dict(r) for r in repos],
         }

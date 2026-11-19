@@ -91,3 +91,11 @@ class RepositoryService:
                     author_name=meta.author_name,
                     commit_message=meta.commit_message,
                 )
+
+    async def list_repositories(self, limit: int = 50, offset: int = 0) -> list[RepositoryModel]:
+        """List registered repositories."""
+        if self._session:
+            return await RepositoryRepository(self._session).list_all(limit, offset)
+        async with AsyncSessionLocal() as session:
+            return await RepositoryRepository(session).list_all(limit, offset)
+

@@ -5,6 +5,7 @@ mod data;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use slint::{ModelRc, VecModel};
+use reproforge_desktop::supervisor::{ProcessSupervisor, SupervisorStatus};
 use data::{
     generate_mock_builds, get_sample_diff_entries, get_sample_repositories,
     get_sample_revisions, MockBuildRow,
@@ -124,10 +125,31 @@ fn main() -> Result<(), slint::PlatformError> {
     let motion_enabled = is_system_animation_enabled();
     main_window.set_motion_enabled(motion_enabled);
 
-    // 2. Set App Header & Engine Status
-    main_window.set_engine_status(format!("Engine Connected (PID {})", std::process::id()).into());
+    // 2. Set App Header & Start Engine Supervisor
+    main_window.set_engine_status("Engine Starting...".into());
     main_window.set_active_backend(renderer_name.clone().into());
     main_window.set_is_software_renderer(is_software);
+
+    let supervisor = Arc::new(ProcessSupervisor::new());
+    let handle_status = main_window.as_weak();
+    supervisor.on_status_change(move |status| {
+        let status_str = match status {
+            SupervisorStatus::Stopped => "Engine Stopped".to_string(),
+            SupervisorStatus::Starting => "Engine Starting...".to_string(),
+            SupervisorStatus::Connected { pid, .. } => format!("Engine Connected (PID {})", pid),
+            SupervisorStatus::Reconnecting { attempt, max_attempts } => {
+                format!("Engine Reconnecting ({}/{})", attempt, max_attempts)
+            }
+            SupervisorStatus::Failed(err) => format!("Engine Failed: {}", err),
+        };
+        let handle = handle_status.clone();
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Some(ui) = handle.upgrade() {
+                ui.set_engine_status(status_str.into());
+            }
+        });
+    });
+    supervisor.start();
 
     // 3. Load Datasets
     let record_count = std::env::var("REPROFORGE_BENCH_RECORDS")
@@ -243,10 +265,20 @@ fn main() -> Result<(), slint::PlatformError> {
 
     // Connect Refresh Callback
     let handle_refresh = main_window.as_weak();
+    let sup_refresh = supervisor.clone();
     main_window.on_refresh_requested(move || {
         if let Some(ui) = handle_refresh.upgrade() {
             println!("UI Refresh requested (Ctrl+R)");
-            ui.set_engine_status(format!("Engine Synchronized (PID {})", std::process::id()).into());
+            if let Some(client) = sup_refresh.get_client() {
+                if let Ok(ping_val) = client.send_request("system.ping", None, std::time::Duration::from_secs(2)) {
+                    println!("Daemon ping ok: {:?}", ping_val);
+                }
+            }
+            let pid_str = sup_refresh
+                .get_engine_pid()
+                .map(|p| format!("Engine Connected (PID {})", p))
+                .unwrap_or_else(|| "Engine Synchronized".to_string());
+            ui.set_engine_status(pid_str.into());
         }
     });
 
@@ -280,5 +312,7 @@ fn main() -> Result<(), slint::PlatformError> {
         });
     }
 
-    main_window.run()
+    let run_res = main_window.run();
+    supervisor.stop();
+    run_res
 }

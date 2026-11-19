@@ -5,10 +5,15 @@ skinparam backgroundColor #FAFAFA
 skinparam componentStyle uml2
 skinparam packageStyle rectangle
 
-package "Presentation Layer" as PresentationPkg {
-  [Native Rust Desktop UI (Slint v1.19.0 - Hardware & Software)] as DesktopApp
+package "Presentation & Client Layer" as PresentationPkg {
+  [Native Rust Desktop UI (Slint v1.19.0)] as DesktopApp
+  [Rust Child Process Supervisor & Client] as RustSupervisor
   [ReproForge CLI Application] as CliApp
   [Optional Headless API (FastAPI / Automation)] as HeadlessApi
+}
+
+package "Engine Daemon & Dispatcher Layer" as DaemonPkg {
+  [Python Background Engine Daemon (JSON-RPC 2.0 Stdio)] as EngineDaemon
 }
 
 package "Shared Application Service Layer" as ServicesPkg {
@@ -41,23 +46,25 @@ package "Durable Persistence Layer" as PersistencePkg {
 }
 
 ' Distinct unique arrow colors for every individual connection
-DesktopApp -[#1E88E5]-> ServicesPkg : 1. Local Structured IPC Calls
-CliApp -[#D81B60]-> ServicesPkg : 2. Direct Python Async Invocations
-HeadlessApi -[#8E24AA]-> ServicesPkg : 3. Remote Ingestion Endpoints
-RepoService -[#3949AB]-> GitManager : 4. Pinned Commit Resolution & Clean Export
-FpService -[#00ACC1]-> Repositories : 5. Telemetry Capture & Canonical Fingerprints
-BuildService -[#00897B]-> Detector : 6. Auto-detects Build Systems & Lockfiles
-BuildService -[#43A047]-> WorkspaceMgr : 7. Allocates Isolated Build Workspaces
-BuildService -[#7CB342]-> RunnerBackend : 8. Executes Sandboxed Subprocesses
-RunnerBackend -[#C0CA33]-> Collector : 9. Discovers & Stream-hashes Build Artifacts
-Collector -[#FDD835]-> Repositories : 10. Persists Strict SHA-256 Digest Records
-CompService -[#FFB300]-> Normalizer : 11. Normalizes Timestamps, Perms & Gzip Headers
-CompService -[#FB8C00]-> DiffEngine : 12. Executes Recursive Archive & File Diffs
-DiffEngine -[#F4511E]-> DiagRules : 13. Feeds Structural Findings & Content Diffs
-DiagRules -[#6D4C41]-> RemediationGen : 14. Generates Recommendation-only Guidance
-DiagRules -[#546E7A]-> Scorer : 15. Provides Classified Failure Evidence
-Scorer -[#E53935]-> CompService : 16. Produces Metric Vector & Categorical Verdict
-CompService -[#880E4F]-> Repositories : 17. Persists Comparisons, Findings & Verdicts
-BuildService -[#4A148C]-> Repositories : 18. Tracks Build Lifecycle & Post-Crash Recovery
-Repositories -[#0D47A1]-> SqliteDb : 19. Atomic WAL Commits with Busy Timeout
+DesktopApp -[#1E88E5]-> RustSupervisor : 1. Thread-safe UI State & Event Dispatch
+RustSupervisor -[#00897B]-> EngineDaemon : 2. Isolated Stdio JSON-RPC 2.0 with Heartbeat & Auto-Restart
+EngineDaemon -[#D81B60]-> ServicesPkg : 3. Dispatches Asynchronous Requests to Services
+CliApp -[#8E24AA]-> ServicesPkg : 4. Direct Python Async Invocations
+HeadlessApi -[#3949AB]-> ServicesPkg : 5. Remote Ingestion Endpoints
+RepoService -[#00ACC1]-> GitManager : 6. Pinned Commit Resolution & Clean Export
+FpService -[#2E7D32]-> Repositories : 7. Telemetry Capture & Canonical Fingerprints
+BuildService -[#43A047]-> Detector : 8. Auto-detects Build Systems & Lockfiles
+BuildService -[#7CB342]-> WorkspaceMgr : 9. Allocates Isolated Build Workspaces
+BuildService -[#C0CA33]-> RunnerBackend : 10. Executes Sandboxed Subprocesses
+RunnerBackend -[#FDD835]-> Collector : 11. Discovers & Stream-hashes Build Artifacts
+Collector -[#FFB300]-> Repositories : 12. Persists Strict SHA-256 Digest Records
+CompService -[#FB8C00]-> Normalizer : 13. Normalizes Timestamps, Perms & Gzip Headers
+CompService -[#F4511E]-> DiffEngine : 14. Executes Recursive Archive & File Diffs
+DiffEngine -[#6D4C41]-> DiagRules : 15. Feeds Structural Findings & Content Diffs
+DiagRules -[#546E7A]-> RemediationGen : 16. Generates Recommendation-only Guidance
+DiagRules -[#E53935]-> Scorer : 17. Provides Classified Failure Evidence
+Scorer -[#880E4F]-> CompService : 18. Produces Metric Vector & Categorical Verdict
+CompService -[#4A148C]-> Repositories : 19. Persists Comparisons, Findings & Verdicts
+BuildService -[#0D47A1]-> Repositories : 20. Tracks Build Lifecycle & Post-Crash Recovery
+Repositories -[#1B5E20]-> SqliteDb : 21. Atomic WAL Commits with Busy Timeout
 @enduml

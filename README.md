@@ -2,7 +2,7 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![Architecture](https://img.shields.io/badge/architecture-modular%20monolith-emerald.svg)](architecture.puml)
-[![Test Suite](https://img.shields.io/badge/tests-68%20passed-brightgreen.svg)](tests/)
+[![Test Suite](https://img.shields.io/badge/tests-83%20passed-brightgreen.svg)](tests/)
 [![License: Academic](https://img.shields.io/badge/License-Academic%20Evaluation-lightgrey.svg)](LICENSE)
 
 > An automated system for detecting, classifying, and diagnosing non-deterministic software builds across independent build environments.
@@ -37,7 +37,9 @@ Rather than merely displaying binary diffs, ReproForge correlates observed envir
 The project architecture is structured into clear, decoupled layers:
 
 ```
-[Presentation Layer]     Native Rust Desktop UI (Slint / Iced) & Standalone CLI
+[Presentation Layer]     Native Rust Desktop UI (Slint v1.19.0) & Standalone CLI
+        │
+[Supervision & IPC]      Rust Process Supervisor (Auto-restart, Heartbeat) ⇄ Python Daemon (JSON-RPC 2.0 stdio)
         │
 [Shared Service Layer]   BuildService, ComparisonService, DiagnosticService, FingerprintService
         │
@@ -124,7 +126,7 @@ Execute the automated test suite with coverage reporting:
 - [x] **Phase 5A: Shared Application Services & Durable Persistence** (Async Repositories, SQLite WAL Pragmas, Crash Recovery, Service Layer, CLI Refactor)
 - [x] **Milestone B: Slint vs. Iced Minimal Prototype Benchmarking** (Empirical release benchmarks, WGPU vs Tiny-Skia, 50k scaling, first-frame presentation)
 - [x] **Milestone C: Desktop Framework Selection & UI Shell Foundation** (Slint v1.19.0 permanent client, 5 interactive views, DPI-safe native window management, hardware & software fallback)
-- [ ] **Milestone D: Local Structured JSONL IPC Daemon & Process Supervision**
+- [x] **Milestone D: Local Structured JSONL IPC Daemon & Process Supervision** (JSON-RPC 2.0 stdio framing, stdout isolation, Rust child process supervisor, crash detection, auto-restart, heartbeats, and durable orphan reconciliation)
 - [ ] **Milestone E: Desktop Overview, Repository & Build Screens**
 - [ ] **Milestone F: Comparison, Diagnostics & Causality Graph Screens**
 - [ ] **Milestone G: Perturbation, Reproducibility Passport & Remediation UI**

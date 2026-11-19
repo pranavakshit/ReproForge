@@ -6,7 +6,7 @@ import os
 import sys
 import traceback
 from typing import Optional
-from backend.app.database.session import get_session
+from backend.app.database.session import AsyncSessionLocal
 from backend.app.ipc.dispatcher import RequestDispatcher
 from backend.app.ipc.protocol import (
     JsonRpcErrorCode,
@@ -59,31 +59,27 @@ class IpcDaemon:
 
         # Step 1: Reconcile any orphaned active builds from past engine crashes
         try:
-            async with get_session() as session:
-                build_repo = BuildRepository(session)
-                reconciled = await build_repo.reconcile_interrupted_builds()
-                if reconciled:
-                    sys.stderr.write(f"[IpcDaemon] Reconciled {reconciled} orphaned build(s) to EXECUTION_INTERRUPTED\n")
+            async with AsyncSessionLocal() as session:
+                async with session.begin():
+                    build_repo = BuildRepository(session)
+                    reconciled = await build_repo.reconcile_interrupted_builds()
+                    if reconciled:
+                        sys.stderr.write(f"[IpcDaemon] Reconciled {reconciled} orphaned build(s) to EXECUTION_INTERRUPTED\n")
         except Exception as exc:
             sys.stderr.write(f"[IpcDaemon] Warning during orphan reconciliation: {exc}\n")
 
-        # Step 2: Read loop over stdin
-        loop = asyncio.get_running_loop()
-        reader = asyncio.StreamReader()
-        protocol = asyncio.StreamReaderProtocol(reader)
-        await loop.connect_read_pipe(lambda: protocol, sys.stdin)
-
+        # Step 2: Read loop over stdin using threadpool executor for cross-platform stdio safety
         sys.stderr.write(f"[IpcDaemon] Engine Daemon ready (PID {os.getpid()}). Listening on stdin...\n")
 
         while not self.dispatcher.shutdown_requested.is_set():
             try:
-                line_bytes = await reader.readline()
-                if not line_bytes:
+                line_str = await asyncio.to_thread(sys.stdin.readline)
+                if not line_str:
                     # Pipe closed by supervisor / EOF
                     sys.stderr.write("[IpcDaemon] Stdin EOF received, shutting down...\n")
                     break
 
-                line_str = line_bytes.decode("utf-8").strip()
+                line_str = line_str.strip()
                 if not line_str:
                     continue
 
