@@ -270,5 +270,14 @@ def compare_command(artifact1: Path, artifact2: Path):
         console.print(rem_table)
 
 
+@cli.command("daemon")
+@click.option("--no-log-file", is_flag=True, default=False, help="Log to stderr instead of file.")
+def daemon_command(no_log_file: bool):
+    """Run local JSON-RPC 2.0 background engine daemon for desktop IPC."""
+    from backend.app.ipc.daemon import IpcDaemon
+    daemon = IpcDaemon(log_to_file=not no_log_file)
+    asyncio.run(daemon.run())
+
+
 if __name__ == "__main__":
     cli()
