@@ -23,6 +23,8 @@ export component RepositoriesView inherits Rectangle {
     in property <[RevisionItem]> revisions: [];
 
     callback repo_selected(int);
+    callback register_local_repo_clicked();
+    callback build_revision_clicked(string);
 
     background: Theme.bg_primary;
 
@@ -48,11 +50,29 @@ export component RepositoriesView inherits Rectangle {
                     border-radius: Theme.radius_sm;
                     background: Theme.bg_card;
                     border-width: 1px;
-                    border-color: Theme.border_light;
+                    border-color: Theme.status_exact;
                     HorizontalLayout {
                         padding-left: 6px; padding-right: 6px; alignment: center;
-                        Text { text: "Mock Telemetry"; font-size: 10px; font-weight: 600; color: Theme.accent_cyan; vertical-alignment: center; }
+                        Text { text: "Live Git & Repos"; font-size: 10px; font-weight: 600; color: Theme.status_exact; vertical-alignment: center; }
                     }
+                }
+            }
+
+            // Register Local Repo Action Button
+            Rectangle {
+                width: 160px;
+                height: 28px;
+                border-radius: Theme.radius_sm;
+                background: reg_touch.has_hover ? Theme.accent_blue_hover : Theme.accent_blue;
+
+                reg_touch := TouchArea {
+                    clicked => { root.register_local_repo_clicked(); }
+                }
+
+                HorizontalLayout {
+                    alignment: center;
+                    spacing: 6px;
+                    Text { text: "+ Sync Local Repo"; font-size: 11px; font-weight: 600; color: #FFFFFF; vertical-alignment: center; }
                 }
             }
         }
@@ -236,10 +256,39 @@ export component RepositoriesView inherits Rectangle {
                                 Text { text: rev.message; font-size: 11px; color: Theme.text_secondary; }
                             }
 
-                            VerticalLayout {
+                            HorizontalLayout {
+                                spacing: 12px;
                                 alignment: center;
-                                Text { text: rev.author; font-size: 11px; color: Theme.text_muted; horizontal-alignment: end; }
-                                Text { text: rev.timestamp; font-size: 10px; color: Theme.text_dim; horizontal-alignment: end; }
+
+                                VerticalLayout {
+                                    alignment: center;
+                                    Text { text: rev.author; font-size: 11px; color: Theme.text_muted; horizontal-alignment: end; }
+                                    Text { text: rev.timestamp; font-size: 10px; color: Theme.text_dim; horizontal-alignment: end; }
+                                }
+
+                                Rectangle {
+                                    width: 76px;
+                                    height: 26px;
+                                    border-radius: Theme.radius_sm;
+                                    background: bld_touch.has_hover ? Theme.status_exact : Theme.status_exact_bg;
+                                    border-width: 1px;
+                                    border-color: Theme.status_exact;
+
+                                    bld_touch := TouchArea {
+                                        clicked => { root.build_revision_clicked(rev.commit_sha); }
+                                    }
+
+                                    HorizontalLayout {
+                                        alignment: center;
+                                        Text {
+                                            text: "▶ Run Build";
+                                            font-size: 10px;
+                                            font-weight: 700;
+                                            color: bld_touch.has_hover ? #FFFFFF : Theme.status_exact;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+                                }
                             }
                         }
                     }

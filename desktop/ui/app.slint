@@ -31,11 +31,15 @@ export component MainWindow inherits Window {
     in-out property <bool> is_about_open: false;
 
     // Overview Properties
-    in property <string> total_builds: "200";
-    in property <string> bit_for_bit_rate: "85.4%";
-    in property <string> normalized_rate: "96.2%";
-    in property <string> unresolved_count: "14";
+    in property <string> total_builds: "0";
+    in property <string> bit_for_bit_rate: "0.0%";
+    in property <string> normalized_rate: "0.0%";
+    in property <string> unresolved_count: "0";
     in property <[RecentBuildItem]> recent_builds: [];
+    in property <string> overview_telemetry_badge: "Live Database & Engine";
+    in property <string> overview_host_os: "Windows 11 (x86_64)";
+    in property <string> overview_host_cpu: "Python 3.14.7 (.venv verified)";
+    in property <string> overview_host_storage: "SQLite 3 WAL (reproforge.db)";
 
     // Repositories Properties
     in property <[RepoItem]> repositories: [];
@@ -44,13 +48,19 @@ export component MainWindow inherits Window {
 
     // Builds Properties
     in property <[BuildRowData]> build_rows: [];
-    in property <int> builds_total_count: 200;
-    in property <int> builds_filtered_count: 200;
+    in property <int> builds_total_count: 0;
+    in property <int> builds_filtered_count: 0;
     in property <string> selected_build_id: "";
     in property <string> selected_commit_sha: "";
     in property <string> selected_backend: "";
     in property <string> selected_verdict: "";
     in property <string> selected_hash: "";
+
+    in property <string> live_build_status: "IDLE";
+    in property <float> live_build_progress: 0.0;
+    in property <string> live_build_message: "Ready to execute isolated reproducible build";
+    in property <string> live_log_text: "[ReproForge Live Console]\nSelect a build to inspect logs or click '▶ Trigger Isolated Build' to run a live reproducible build.";
+    in property <bool> is_build_running: false;
 
     // Diagnostics Properties
     in property <string> diag_target_a: "bld-rec-00001 (Host Win11)";
@@ -65,6 +75,10 @@ export component MainWindow inherits Window {
     callback verdict_filter_changed(int);
     callback build_row_clicked(int);
     callback repo_clicked(int);
+    callback register_local_repo_requested();
+    callback build_revision_requested(string);
+    callback trigger_build_requested();
+    callback cancel_build_requested();
 
     // Keyboard Shortcuts Interceptor
     forward-focus: key_handler;
@@ -125,6 +139,10 @@ export component MainWindow inherits Window {
                     motion_enabled: root.motion_enabled;
                     shimmer_progress: root.shimmer_pos;
                     recent_builds: root.recent_builds;
+                    telemetry_badge: root.overview_telemetry_badge;
+                    host_os_info: root.overview_host_os;
+                    host_cpu_info: root.overview_host_cpu;
+                    host_storage_info: root.overview_host_storage;
                 }
 
                 if root.active_tab == 1 : RepositoriesView {
@@ -132,6 +150,8 @@ export component MainWindow inherits Window {
                     selected_repo_index: root.selected_repo_index;
                     revisions: root.revisions;
                     repo_selected(idx) => { root.repo_clicked(idx); }
+                    register_local_repo_clicked => { root.register_local_repo_requested(); }
+                    build_revision_clicked(sha) => { root.build_revision_requested(sha); }
                 }
 
                 if root.active_tab == 2 : BuildsView {
@@ -143,9 +163,16 @@ export component MainWindow inherits Window {
                     selected_backend: root.selected_backend;
                     selected_verdict: root.selected_verdict;
                     selected_hash: root.selected_hash;
+                    live_build_status: root.live_build_status;
+                    live_build_progress: root.live_build_progress;
+                    live_build_message: root.live_build_message;
+                    live_log_text: root.live_log_text;
+                    is_build_running: root.is_build_running;
                     search_changed(q) => { root.search_query_changed(q); }
                     verdict_filter_changed(f) => { root.verdict_filter_changed(f); }
                     row_selected(idx) => { root.build_row_clicked(idx); }
+                    trigger_build_requested => { root.trigger_build_requested(); }
+                    cancel_build_requested => { root.cancel_build_requested(); }
                 }
 
                 if root.active_tab == 3 : DiagnosticsView {

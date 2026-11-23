@@ -5,14 +5,16 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
 
-use crate::ipc::protocol::{JsonRpcRequest, JsonRpcResponse};
+use crate::ipc::protocol::{JsonRpcNotification, JsonRpcRequest, JsonRpcResponse};
 
 type ResponseSender = mpsc::Sender<Result<JsonRpcResponse, String>>;
+type NotificationCallback = Box<dyn Fn(&str, Option<&serde_json::Value>) + Send + Sync + 'static>;
 
 #[derive(Clone)]
 pub struct IpcClient {
     stdin: Arc<Mutex<Option<ChildStdin>>>,
     pending_requests: Arc<Mutex<HashMap<u64, ResponseSender>>>,
+    notification_handlers: Arc<Mutex<Vec<NotificationCallback>>>,
     next_id: Arc<AtomicU64>,
 }
 
@@ -21,7 +23,17 @@ impl IpcClient {
         Self {
             stdin: Arc::new(Mutex::new(Some(stdin))),
             pending_requests: Arc::new(Mutex::new(HashMap::new())),
+            notification_handlers: Arc::new(Mutex::new(Vec::new())),
             next_id: Arc::new(AtomicU64::new(1)),
+        }
+    }
+
+    pub fn on_notification<F>(&self, callback: F)
+    where
+        F: Fn(&str, Option<&serde_json::Value>) + Send + Sync + 'static,
+    {
+        if let Ok(mut handlers) = self.notification_handlers.lock() {
+            handlers.push(Box::new(callback));
         }
     }
 
@@ -117,6 +129,15 @@ impl IpcClient {
                 };
                 if let Some(tx) = sender {
                     let _ = tx.send(Ok(resp));
+                    return;
+                }
+            }
+        }
+
+        if let Ok(notif) = serde_json::from_str::<JsonRpcNotification>(trimmed) {
+            if let Ok(handlers) = self.notification_handlers.lock() {
+                for h in handlers.iter() {
+                    h(&notif.method, notif.params.as_ref());
                 }
             }
         }

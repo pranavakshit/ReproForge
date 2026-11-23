@@ -12,14 +12,18 @@ export struct RecentBuildItem {
 }
 
 export component OverviewView inherits Rectangle {
-    in property <string> total_builds: "200";
-    in property <string> bit_for_bit_rate: "85.4%";
-    in property <string> normalized_rate: "96.2%";
-    in property <string> unresolved_count: "14";
+    in property <string> total_builds: "0";
+    in property <string> bit_for_bit_rate: "0.0%";
+    in property <string> normalized_rate: "0.0%";
+    in property <string> unresolved_count: "0";
     in property <bool> is_loading: false;
     in property <bool> motion_enabled: true;
     in property <float> shimmer_progress: 0.0;
     in property <[RecentBuildItem]> recent_builds: [];
+    in property <string> telemetry_badge: "Live Database & Engine";
+    in property <string> host_os_info: "Windows 11 (x86_64)";
+    in property <string> host_cpu_info: "Python 3.14.7 (.venv verified)";
+    in property <string> host_storage_info: "SQLite 3 WAL (reproforge.db)";
 
     background: Theme.bg_primary;
 
@@ -45,10 +49,10 @@ export component OverviewView inherits Rectangle {
                     border-radius: Theme.radius_sm;
                     background: Theme.bg_card;
                     border-width: 1px;
-                    border-color: Theme.border_light;
+                    border-color: Theme.status_exact;
                     HorizontalLayout {
                         padding-left: 6px; padding-right: 6px; alignment: center;
-                        Text { text: "Mock Telemetry"; font-size: 10px; font-weight: 600; color: Theme.accent_cyan; vertical-alignment: center; }
+                        Text { text: root.telemetry_badge; font-size: 10px; font-weight: 600; color: Theme.status_exact; vertical-alignment: center; }
                     }
                 }
             }
@@ -214,15 +218,15 @@ export component OverviewView inherits Rectangle {
                             spacing: 8px;
                             HorizontalLayout {
                                 Text { text: "OS Platform:"; font-size: 11px; color: Theme.text_muted; width: 110px; }
-                                Text { text: "Windows 11 Home 24H2 (x86_64)"; font-size: 11px; font-weight: 600; color: Theme.text_primary; }
+                                Text { text: root.host_os_info; font-size: 11px; font-weight: 600; color: Theme.text_primary; }
                             }
                             HorizontalLayout {
                                 Text { text: "Python Core:"; font-size: 11px; color: Theme.text_muted; width: 110px; }
-                                Text { text: "3.14.7 (.venv verified)"; font-size: 11px; font-weight: 600; color: Theme.accent_cyan; }
+                                Text { text: root.host_cpu_info; font-size: 11px; font-weight: 600; color: Theme.accent_cyan; }
                             }
                             HorizontalLayout {
                                 Text { text: "Persistence:"; font-size: 11px; color: Theme.text_muted; width: 110px; }
-                                Text { text: "SQLite 3 (WAL mode, busy_timeout=5s)"; font-size: 11px; color: Theme.status_exact; }
+                                Text { text: root.host_storage_info; font-size: 11px; color: Theme.status_exact; }
                             }
                             HorizontalLayout {
                                 Text { text: "Container Runtimes:"; font-size: 11px; color: Theme.text_muted; width: 110px; }

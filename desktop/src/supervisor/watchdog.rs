@@ -16,12 +16,15 @@ pub enum SupervisorStatus {
     Failed(String),
 }
 
+type NotificationCb = Arc<dyn Fn(&str, Option<&serde_json::Value>) + Send + Sync + 'static>;
+
 pub struct ProcessSupervisor {
     status: Arc<Mutex<SupervisorStatus>>,
     client: Arc<Mutex<Option<IpcClient>>>,
     engine_pid: Arc<Mutex<Option<u32>>>,
     stop_signal: Arc<AtomicBool>,
     status_callbacks: Arc<Mutex<Vec<Box<dyn Fn(&SupervisorStatus) + Send + 'static>>>>,
+    notification_callbacks: Arc<Mutex<Vec<NotificationCb>>>,
 }
 
 impl ProcessSupervisor {
@@ -32,6 +35,21 @@ impl ProcessSupervisor {
             engine_pid: Arc::new(Mutex::new(None)),
             stop_signal: Arc::new(AtomicBool::new(false)),
             status_callbacks: Arc::new(Mutex::new(Vec::new())),
+            notification_callbacks: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    pub fn on_notification<F>(&self, callback: F)
+    where
+        F: Fn(&str, Option<&serde_json::Value>) + Send + Sync + 'static,
+    {
+        let cb: NotificationCb = Arc::new(callback);
+        {
+            let mut notifs = self.notification_callbacks.lock().unwrap();
+            notifs.push(cb.clone());
+        }
+        if let Some(client) = self.get_client() {
+            client.on_notification(move |m, p| cb(m, p));
         }
     }
 
@@ -147,6 +165,13 @@ impl ProcessSupervisor {
             };
 
             let client = IpcClient::new(stdin);
+            {
+                let notifs = self.notification_callbacks.lock().unwrap();
+                for cb in notifs.iter() {
+                    let cb_clone = cb.clone();
+                    client.on_notification(move |m, p| cb_clone(m, p));
+                }
+            }
             {
                 let mut c_guard = self.client.lock().unwrap();
                 *c_guard = Some(client.clone());

@@ -89,3 +89,14 @@ class RepositoryRepository(BaseRepository[RepositoryModel]):
         self.session.add(new_rev)
         await self.session.flush()
         return new_rev
+
+    async def list_revisions(self, repository_id: str, limit: int = 50) -> List[SourceRevisionModel]:
+        """List historical revisions recorded for a repository."""
+        stmt = (
+            select(SourceRevisionModel)
+            .where(SourceRevisionModel.repository_id == repository_id)
+            .order_by(SourceRevisionModel.created_at.desc())
+            .limit(limit)
+        )
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())

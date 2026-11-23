@@ -2,7 +2,7 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![Architecture](https://img.shields.io/badge/architecture-modular%20monolith-emerald.svg)](architecture.puml)
-[![Test Suite](https://img.shields.io/badge/tests-83%20passed-brightgreen.svg)](tests/)
+[![Test Suite](https://img.shields.io/badge/tests-86%20passed-brightgreen.svg)](tests/)
 [![License: Academic](https://img.shields.io/badge/License-Academic%20Evaluation-lightgrey.svg)](LICENSE)
 
 > An automated system for detecting, classifying, and diagnosing non-deterministic software builds across independent build environments.
@@ -127,7 +127,7 @@ Execute the automated test suite with coverage reporting:
 - [x] **Milestone B: Slint vs. Iced Minimal Prototype Benchmarking** (Empirical release benchmarks, WGPU vs Tiny-Skia, 50k scaling, first-frame presentation)
 - [x] **Milestone C: Desktop Framework Selection & UI Shell Foundation** (Slint v1.19.0 permanent client, 5 interactive views, DPI-safe native window management, hardware & software fallback)
 - [x] **Milestone D: Local Structured JSONL IPC Daemon & Process Supervision** (JSON-RPC 2.0 stdio framing, stdout isolation, Rust child process supervisor, crash detection, auto-restart, heartbeats, and durable orphan reconciliation)
-- [ ] **Milestone E: Desktop Overview, Repository & Build Screens**
+- [x] **Milestone E: Desktop Overview, Repository & Build Screens** (Live metrics computation, repository registration and Git revision browsing, live build triggering, streaming log chunk console drawer, progress bars, and cancellation via JSON-RPC 2.0 IPC)
 - [ ] **Milestone F: Comparison, Diagnostics & Causality Graph Screens**
 - [ ] **Milestone G: Perturbation, Reproducibility Passport & Remediation UI**
 - [ ] **Milestone H: Packaging, Verification & Academic Deliverables**

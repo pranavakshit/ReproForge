@@ -99,3 +99,48 @@ class RepositoryService:
         async with AsyncSessionLocal() as session:
             return await RepositoryRepository(session).list_all(limit, offset)
 
+    async def get_repository(self, repository_id: str) -> Optional[RepositoryModel]:
+        """Retrieve repository by ID."""
+        if self._session:
+            return await RepositoryRepository(self._session).get_by_id(repository_id)
+        async with AsyncSessionLocal() as session:
+            return await RepositoryRepository(session).get_by_id(repository_id)
+
+    async def get_revisions(self, repository_id: str, limit: int = 50) -> list[SourceRevisionModel]:
+        """Retrieve recorded revisions, syncing with local Git log if repository is local on disk."""
+        if self._session:
+            return await self._get_revisions(self._session, repository_id, limit)
+        async with AsyncSessionLocal() as session:
+            async with session.begin():
+                return await self._get_revisions(session, repository_id, limit)
+
+    async def _get_revisions(
+        self, session: AsyncSession, repository_id: str, limit: int
+    ) -> list[SourceRevisionModel]:
+        repo_repo = RepositoryRepository(session)
+        revs = await repo_repo.list_revisions(repository_id, limit)
+        if revs:
+            return revs
+
+        # If no revisions recorded yet, check if repo_url is a readable Git path on disk
+        repo = await repo_repo.get_by_id(repository_id)
+        if not repo:
+            return []
+
+        local_path = Path(repo.repo_url)
+        if local_path.exists() and (local_path / ".git").exists():
+            recent = self.git_manager.get_recent_commits(local_path, repository_id=repository_id, limit=limit)
+            recorded: list[SourceRevisionModel] = []
+            for r in recent:
+                saved = await repo_repo.record_revision(
+                    repository_id=repository_id,
+                    commit_sha=r.commit_sha,
+                    branch_name=r.branch_name,
+                    author_name=r.author_name,
+                    commit_message=r.commit_message,
+                )
+                recorded.append(saved)
+            return recorded
+
+        return []
+

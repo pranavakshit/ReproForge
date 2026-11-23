@@ -22,6 +22,7 @@ package "Shared Application Service Layer" as ServicesPkg {
   [Build Execution Service] as BuildService
   [Artifact Comparison Service] as CompService
   [Diagnostic & Remediation Service] as DiagService
+  [Overview & Telemetry Service] as OverviewService
 }
 
 package "Execution & Orchestration Layer" as ExecutionPkg {
@@ -67,4 +68,6 @@ Scorer -[#880E4F]-> CompService : 18. Produces Metric Vector & Categorical Verdi
 CompService -[#4A148C]-> Repositories : 19. Persists Comparisons, Findings & Verdicts
 BuildService -[#0D47A1]-> Repositories : 20. Tracks Build Lifecycle & Post-Crash Recovery
 Repositories -[#1B5E20]-> SqliteDb : 21. Atomic WAL Commits with Busy Timeout
+EngineDaemon -[#004D40]-> RustSupervisor : 22. Asynchronous Notification Stream (build.progress, build.log_chunk, build.completed)
+OverviewService -[#BF360C]-> Repositories : 23. Aggregates WAL Build Metrics & Host Telemetry
 @enduml

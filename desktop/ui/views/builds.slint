@@ -21,12 +21,20 @@ export component BuildsView inherits Rectangle {
     in property <string> selected_verdict: "";
     in property <string> selected_hash: "";
 
+    in property <string> live_build_status: "IDLE";
+    in property <float> live_build_progress: 0.0;
+    in property <string> live_build_message: "Ready to execute isolated reproducible build";
+    in property <string> live_log_text: "[ReproForge Live Console]\nSelect a build to inspect logs or click '▶ Trigger Isolated Build' to run a live reproducible build.";
+    in property <bool> is_build_running: false;
+
     in-out property <string> search_query: "";
     in-out property <int> verdict_filter: 0; // 0: All, 1: Exact, 2: Norm, 3: Inconclusive, 4: Drift
 
     callback search_changed(string);
     callback verdict_filter_changed(int);
     callback row_selected(int);
+    callback trigger_build_requested();
+    callback cancel_build_requested();
 
     background: Theme.bg_primary;
 
@@ -52,18 +60,56 @@ export component BuildsView inherits Rectangle {
                     border-radius: Theme.radius_sm;
                     background: Theme.bg_card;
                     border-width: 1px;
-                    border-color: Theme.border_light;
+                    border-color: Theme.status_exact;
                     HorizontalLayout {
                         padding-left: 6px; padding-right: 6px; alignment: center;
-                        Text { text: "Mock Telemetry"; font-size: 10px; font-weight: 600; color: Theme.accent_cyan; vertical-alignment: center; }
+                        Text { text: "Live Engine Ledger"; font-size: 10px; font-weight: 600; color: Theme.status_exact; vertical-alignment: center; }
                     }
                 }
             }
-            Text {
-                text: "Showing " + root.filtered_count + " of " + root.total_count + " builds";
-                font-size: 11px;
-                color: Theme.text_dim;
-                vertical-alignment: center;
+
+            HorizontalLayout {
+                spacing: 10px;
+
+                if root.is_build_running : Rectangle {
+                    width: 110px;
+                    height: 28px;
+                    border-radius: Theme.radius_sm;
+                    background: Theme.status_fail;
+
+                    TouchArea {
+                        clicked => { root.cancel_build_requested(); }
+                    }
+
+                    HorizontalLayout {
+                        alignment: center;
+                        Text { text: "⏹ Cancel Build"; font-size: 11px; font-weight: 700; color: #FFFFFF; vertical-alignment: center; }
+                    }
+                }
+
+                Rectangle {
+                    width: 160px;
+                    height: 28px;
+                    border-radius: Theme.radius_sm;
+                    background: run_touch.has_hover ? Theme.status_exact : Theme.status_exact_bg;
+                    border-width: 1px;
+                    border-color: Theme.status_exact;
+
+                    run_touch := TouchArea {
+                        clicked => { root.trigger_build_requested(); }
+                    }
+
+                    HorizontalLayout {
+                        alignment: center;
+                        Text {
+                            text: root.is_build_running ? "⏳ Building..." : "▶ Trigger Isolated Build";
+                            font-size: 11px;
+                            font-weight: 700;
+                            color: run_touch.has_hover ? #FFFFFF : Theme.status_exact;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
             }
         }
 
@@ -241,38 +287,88 @@ export component BuildsView inherits Rectangle {
             }
         }
 
-        // Build Inspection Detail Drawer (Bottom Card)
+        // Build Inspection & Live Execution Terminal Drawer
         Rectangle {
-            height: 90px;
+            height: 140px;
             background: Theme.bg_secondary;
             border-radius: Theme.radius_md;
             border-width: 1px;
             border-color: Theme.border_subtle;
 
-            HorizontalLayout {
-                padding: 12px;
-                spacing: 24px;
-                alignment: space-between;
+            VerticalLayout {
+                padding: 10px;
+                spacing: 8px;
 
-                VerticalLayout {
-                    spacing: 4px;
-                    Text { text: "SELECTED BUILD"; font-size: 10px; font-weight: 600; color: Theme.text_dim; }
-                    Text { text: root.selected_build_id != "" ? root.selected_build_id : "bld-rec-00001"; font-size: 14px; font-weight: 700; color: Theme.accent_cyan; }
-                    Text { text: "Commit: " + (root.selected_commit_sha != "" ? root.selected_commit_sha : "a1b2c3d4f4"); font-size: 11px; color: Theme.text_secondary; }
+                // Status & Progress Header
+                HorizontalLayout {
+                    spacing: 12px;
+                    alignment: space-between;
+
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Text {
+                            text: "EXECUTION CONSOLE:";
+                            font-size: 11px;
+                            font-weight: 700;
+                            color: Theme.text_muted;
+                            vertical-alignment: center;
+                        }
+                        StatusBadge {
+                            text: root.live_build_status;
+                            variant: (root.live_build_status == "COMPLETED") ? "exact" :
+                                     (root.live_build_status == "BUILDING" || root.live_build_status == "INITIALIZING") ? "norm" :
+                                     (root.live_build_status == "CANCELLED" || root.live_build_status == "FAILED") ? "fail" : "inconclusive";
+                        }
+                        Text {
+                            text: root.live_build_message;
+                            font-size: 11px;
+                            color: Theme.text_secondary;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    if root.selected_build_id != "" : Text {
+                        text: "Selected: " + root.selected_build_id + " (" + root.selected_commit_sha + ")";
+                        font-size: 11px;
+                        color: Theme.text_dim;
+                        vertical-alignment: center;
+                    }
                 }
 
-                VerticalLayout {
-                    spacing: 4px;
-                    Text { text: "SANDBOX ISOLATION"; font-size: 10px; font-weight: 600; color: Theme.text_dim; }
-                    Text { text: "Backend: " + (root.selected_backend != "" ? root.selected_backend : "docker"); font-size: 12px; font-weight: 600; color: Theme.text_primary; }
-                    Text { text: "Isolation: Process/Network Gated"; font-size: 11px; color: Theme.status_exact; }
+                // Progress Bar
+                Rectangle {
+                    height: 4px;
+                    border-radius: 2px;
+                    background: Theme.border_subtle;
+
+                    Rectangle {
+                        x: 0px;
+                        y: 0px;
+                        width: root.live_build_progress * parent.width;
+                        height: 4px;
+                        border-radius: 2px;
+                        background: Theme.status_exact;
+                    }
                 }
 
-                VerticalLayout {
-                    spacing: 4px;
-                    Text { text: "STREAMING ARTIFACT HASH"; font-size: 10px; font-weight: 600; color: Theme.text_dim; }
-                    Text { text: root.selected_hash != "" ? root.selected_hash : "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"; font-size: 11px; color: Theme.text_secondary; overflow: elide; width: 340px; }
-                    Text { text: "Dual-Hasher: BLAKE2b + SHA-256 Verified"; font-size: 10px; color: Theme.text_dim; }
+                // Terminal Log Display Box
+                Rectangle {
+                    background: #0B0E14;
+                    border-radius: Theme.radius_sm;
+                    border-width: 1px;
+                    border-color: #1F2430;
+                    clip: true;
+
+                    HorizontalLayout {
+                        padding: 8px;
+                        Text {
+                            text: root.live_log_text;
+                            font-size: 11px;
+                            color: #CBCCC6;
+                            font-family: "Consolas, Menlo, monospace";
+                            wrap: word-wrap;
+                        }
+                    }
                 }
             }
         }

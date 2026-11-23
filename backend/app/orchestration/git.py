@@ -92,6 +92,45 @@ class GitRepositoryManager:
             committed_at=committed_at,
         )
 
+    def get_recent_commits(
+        self, repo_path: Path, repository_id: str, limit: int = 20
+    ) -> list[SourceRevisionCreate]:
+        """Extract recent commit history for the repository."""
+        format_spec = "%H%x1f%an%x1f%ct%x1f%s"
+        try:
+            output = self._run_git_cmd(["log", f"-{limit}", f"--format={format_spec}"], cwd=repo_path)
+        except Exception:
+            return []
+
+        revisions: list[SourceRevisionCreate] = []
+        for line in output.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split("\x1f")
+            if len(parts) < 4:
+                continue
+            commit_sha = parts[0].strip()
+            author_name = parts[1].strip()
+            try:
+                timestamp_epoch = int(parts[2].strip())
+                committed_at = datetime.fromtimestamp(timestamp_epoch, tz=timezone.utc)
+            except Exception:
+                committed_at = datetime.now(timezone.utc)
+            commit_message = parts[3].strip()
+
+            revisions.append(
+                SourceRevisionCreate(
+                    repository_id=repository_id,
+                    commit_sha=commit_sha,
+                    branch_name="HEAD",
+                    author_name=author_name,
+                    commit_message=commit_message,
+                    committed_at=committed_at,
+                )
+            )
+        return revisions
+
     def export_clean_revision(self, repo_path: Path, target_dir: Path, commit_sha: str) -> Path:
         """Export a clean, isolated source tree for the given commit without untracked files or .git history."""
         target_dir.mkdir(parents=True, exist_ok=True)

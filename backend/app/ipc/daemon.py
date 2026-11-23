@@ -22,10 +22,16 @@ class IpcDaemon:
     """Manages stdio JSON-RPC IPC with strict stdout isolation."""
 
     def __init__(self, log_to_file: bool = True) -> None:
-        self.dispatcher = RequestDispatcher()
+        self.dispatcher = RequestDispatcher(on_notify=self.notify_client)
         self.log_to_file = log_to_file
         self._ipc_writer: Optional[io.TextIOWrapper] = None
         self._real_stdout_fd: Optional[int] = None
+
+    def notify_client(self, method: str, params: Dict[str, Any]) -> None:
+        """Send asynchronous JSON-RPC notification to connected client."""
+        from backend.app.ipc.protocol import JsonRpcNotification
+        notif = JsonRpcNotification(method=method, params=params)
+        self.write_ipc_message(encode_message(notif))
 
     def _setup_stdout_isolation(self) -> None:
         """Isolate raw OS stdout for framed IPC messages only, redirecting sys.stdout to stderr/file."""

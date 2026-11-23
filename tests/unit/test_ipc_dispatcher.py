@@ -98,3 +98,53 @@ async def test_dispatcher_service_routing_mocked():
     assert resp.id == "fp-call"
     assert resp.result["fingerprint_id"] == "fp-123"
     mock_fp_svc.capture_and_persist.assert_awaited_once_with(repo_id="r-1")
+
+
+@pytest.mark.asyncio
+async def test_dispatcher_overview_metrics_routing():
+    mock_overview_svc = MagicMock()
+    mock_overview_svc.get_overview_metrics = AsyncMock(return_value={
+        "total_builds": 42,
+        "bit_for_bit_rate": "88.0%",
+        "normalized_rate": "95.0%",
+        "unresolved_count": 2,
+    })
+
+    dispatcher = RequestDispatcher(overview_service=mock_overview_svc)
+    req = JsonRpcRequest(id="ov-1", method="overview.get_metrics")
+    resp = await dispatcher.dispatch(req)
+
+    assert resp.id == "ov-1"
+    assert resp.result["total_builds"] == 42
+    assert resp.result["bit_for_bit_rate"] == "88.0%"
+
+
+@pytest.mark.asyncio
+async def test_dispatcher_repository_register_and_revisions_mocked():
+    mock_repo_svc = MagicMock()
+    mock_repo = MagicMock()
+    mock_repo.id = "repo-xyz"
+    mock_repo.name = "ReproForge"
+    mock_repo.model_dump.return_value = {"id": "repo-xyz", "name": "ReproForge"}
+    mock_repo_svc.register_repository = AsyncMock(return_value=mock_repo)
+
+    mock_rev = MagicMock()
+    mock_rev.commit_sha = "abc12345"
+    mock_rev.model_dump.return_value = {"commit_sha": "abc12345", "author_name": "Dev"}
+    mock_repo_svc.get_revisions = AsyncMock(return_value=[mock_rev])
+
+    dispatcher = RequestDispatcher(repository_service=mock_repo_svc)
+
+    # Register
+    reg_req = JsonRpcRequest(id=101, method="repository.register", params={"name": "ReproForge", "repo_url": "."})
+    reg_resp = await dispatcher.dispatch(reg_req)
+    assert reg_resp.id == 101
+    assert reg_resp.result["name"] == "ReproForge"
+
+    # Get Revisions
+    rev_req = JsonRpcRequest(id=102, method="repository.get_revisions", params={"repository_id": "repo-xyz"})
+    rev_resp = await dispatcher.dispatch(rev_req)
+    assert rev_resp.id == 102
+    assert rev_resp.result["total_count"] == 1
+    assert rev_resp.result["revisions"][0]["commit_sha"] == "abc12345"
+
