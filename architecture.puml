@@ -27,6 +27,7 @@ package "Shared Application Service Layer" as ServicesPkg {
 
 package "Execution & Orchestration Layer" as ExecutionPkg {
   [Git Repository Manager] as GitManager
+  [Multi-Repository & Revision Seeder] as RepoSeeder
   [Build Configuration Detector] as Detector
   [Workspace & Sandbox Manager] as WorkspaceMgr
   [Local Sandbox & Docker Runner] as RunnerBackend
@@ -70,4 +71,6 @@ BuildService -[#0D47A1]-> Repositories : 20. Tracks Build Lifecycle & Post-Crash
 Repositories -[#1B5E20]-> SqliteDb : 21. Atomic WAL Commits with Busy Timeout
 EngineDaemon -[#004D40]-> RustSupervisor : 22. Asynchronous Notification Stream (build.progress, build.log_chunk, build.completed)
 OverviewService -[#BF360C]-> Repositories : 23. Aggregates WAL Build Metrics & Host Telemetry
+RepoSeeder -[#283593]-> GitManager : 24. Extracts Live Git Revisions across Local Repos
+RepoSeeder -[#4E342E]-> Repositories : 25. Synchronizes Authentic Repositories & Commits
 @enduml

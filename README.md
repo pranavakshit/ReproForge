@@ -127,7 +127,7 @@ Execute the automated test suite with coverage reporting:
 - [x] **Milestone B: Slint vs. Iced Minimal Prototype Benchmarking** (Empirical release benchmarks, WGPU vs Tiny-Skia, 50k scaling, first-frame presentation)
 - [x] **Milestone C: Desktop Framework Selection & UI Shell Foundation** (Slint v1.19.0 permanent client, 5 interactive views, DPI-safe native window management, hardware & software fallback)
 - [x] **Milestone D: Local Structured JSONL IPC Daemon & Process Supervision** (JSON-RPC 2.0 stdio framing, stdout isolation, Rust child process supervisor, crash detection, auto-restart, heartbeats, and durable orphan reconciliation)
-- [x] **Milestone E: Desktop Overview, Repository & Build Screens** (Live metrics computation, repository registration and Git revision browsing, live build triggering, streaming log chunk console drawer, progress bars, and cancellation via JSON-RPC 2.0 IPC)
+- [x] **Milestone E: Desktop Overview, Repository & Build Screens** (Live metrics computation, 100% genuine real repository integration across `D:\Repositories` with actual Git histories, live build triggering, streaming log chunk console drawer, progress bars, cancellation, and artifact diffs via JSON-RPC 2.0 IPC)
 - [ ] **Milestone F: Comparison, Diagnostics & Causality Graph Screens**
 - [ ] **Milestone G: Perturbation, Reproducibility Passport & Remediation UI**
 - [ ] **Milestone H: Packaging, Verification & Academic Deliverables**

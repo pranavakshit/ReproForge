@@ -1,5 +1,6 @@
 """Repositories for Project and Git Repository persistence."""
 
+from datetime import datetime
 from typing import List, Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -68,6 +69,7 @@ class RepositoryRepository(BaseRepository[RepositoryModel]):
         branch_name: Optional[str] = None,
         author_name: Optional[str] = None,
         commit_message: Optional[str] = None,
+        committed_at: Optional[datetime] = None,
     ) -> SourceRevisionModel:
         """Record or retrieve a specific Git source revision for a repository."""
         stmt = select(SourceRevisionModel).where(
@@ -85,6 +87,7 @@ class RepositoryRepository(BaseRepository[RepositoryModel]):
             branch_name=branch_name,
             author_name=author_name,
             commit_message=commit_message,
+            committed_at=committed_at,
         )
         self.session.add(new_rev)
         await self.session.flush()

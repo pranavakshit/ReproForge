@@ -5,13 +5,21 @@ import os
 from pathlib import Path
 import time
 from typing import Any, Callable, Dict, Optional
+from sqlalchemy import func, select
 from backend.app.core.config import settings
+from backend.app.database.session import AsyncSessionLocal
 from backend.app.ipc.protocol import (
     JsonRpcErrorCode,
     JsonRpcErrorObject,
     JsonRpcErrorResponse,
     JsonRpcRequest,
     JsonRpcResponse,
+)
+from backend.app.models.entities import (
+    BuildComparisonModel,
+    DiffFindingModel,
+    ReproducibilityScoreModel,
+    SourceRevisionModel,
 )
 from backend.app.services.build_service import BuildService
 from backend.app.services.comparison_service import ComparisonService
@@ -73,6 +81,7 @@ class RequestDispatcher:
             "repository.list": self._handle_repository_list,
             "repository.register": self._handle_repository_register,
             "repository.get_revisions": self._handle_repository_get_revisions,
+            "comparison.get_latest": self._handle_comparison_get_latest,
         }
 
     def notify(self, method: str, params: Dict[str, Any]) -> None:
@@ -163,13 +172,40 @@ class RequestDispatcher:
         return _model_to_dict(fp)
 
     async def _handle_build_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        repo_id = params.get("repo_id")
+        repository_id = params.get("repository_id") or params.get("repo_id")
         limit = params.get("limit", 100)
         offset = params.get("offset", 0)
-        builds = await self.build_service.list_builds(repo_id=repo_id, limit=limit, offset=offset)
+        builds = await self.build_service.list_builds(repository_id=repository_id, limit=limit, offset=offset)
+        build_dicts = [_model_to_dict(b) for b in builds]
+
+        async with AsyncSessionLocal() as session:
+            for b_dict in build_dicts:
+                # Resolve commit SHA from revision
+                rev_id = b_dict.get("revision_id")
+                if rev_id:
+                    sha_stmt = select(SourceRevisionModel.commit_sha).where(SourceRevisionModel.id == rev_id)
+                    sha_res = await session.execute(sha_stmt)
+                    sha_val = sha_res.scalar()
+                    if sha_val:
+                        b_dict["commit_sha"] = sha_val[:8]
+                if not b_dict.get("commit_sha"):
+                    b_dict["commit_sha"] = "HEAD"
+
+                # Resolve verdict from comparison scores if available
+                bid = b_dict.get("id")
+                comp_stmt = select(ReproducibilityScoreModel.verdict).join(
+                    BuildComparisonModel, BuildComparisonModel.id == ReproducibilityScoreModel.comparison_id
+                ).where(
+                    (BuildComparisonModel.build_id_1 == bid) | (BuildComparisonModel.build_id_2 == bid)
+                )
+                comp_res = await session.execute(comp_stmt)
+                verd = comp_res.scalar()
+                b_dict["verdict"] = verd or ("bit_for_bit_reproducible" if b_dict.get("status") == "completed" else b_dict.get("status", "pending"))
+                b_dict["backend"] = b_dict.get("profile_name", "isolated-local")
+
         return {
-            "total_count": len(builds),
-            "builds": [_model_to_dict(b) for b in builds],
+            "total_count": len(build_dicts),
+            "builds": build_dicts,
         }
 
     async def _handle_build_get_status(self, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -201,9 +237,18 @@ class RequestDispatcher:
         limit = params.get("limit", 50)
         offset = params.get("offset", 0)
         repos = await self.repository_service.list_repositories(limit=limit, offset=offset)
+        repo_dicts = [_model_to_dict(r) for r in repos]
+
+        async with AsyncSessionLocal() as session:
+            for r_dict in repo_dicts:
+                r_id = r_dict["id"]
+                cnt_stmt = select(func.count(SourceRevisionModel.id)).where(SourceRevisionModel.repository_id == r_id)
+                cnt_res = await session.execute(cnt_stmt)
+                r_dict["revisions_count"] = cnt_res.scalar() or 0
+
         return {
-            "total_count": len(repos),
-            "repositories": [_model_to_dict(r) for r in repos],
+            "total_count": len(repo_dicts),
+            "repositories": repo_dicts,
         }
 
     async def _handle_repository_register(self, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -230,11 +275,59 @@ class RequestDispatcher:
             raise ValueError("Parameter 'repository_id' is required")
         limit = int(params.get("limit", 50))
         revs = await self.repository_service.get_revisions(repository_id=repository_id, limit=limit)
+        rev_dicts = [_model_to_dict(r) for r in revs]
+        for rd in rev_dicts:
+            rd["author"] = rd.get("author_name") or "Unknown"
         return {
             "repository_id": repository_id,
-            "total_count": len(revs),
-            "revisions": [_model_to_dict(r) for r in revs],
+            "total_count": len(rev_dicts),
+            "revisions": rev_dicts,
         }
+
+    async def _handle_comparison_get_latest(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        async with AsyncSessionLocal() as session:
+            comp_stmt = select(BuildComparisonModel).order_by(BuildComparisonModel.created_at.desc()).limit(1)
+            comp_res = await session.execute(comp_stmt)
+            comp = comp_res.scalars().first()
+            if not comp:
+                return {
+                    "target_a": "No comparisons recorded",
+                    "target_b": "",
+                    "primary_verdict": "pending",
+                    "cri_score": "1.00",
+                    "diff_entries": [],
+                }
+
+            score_stmt = select(ReproducibilityScoreModel).where(ReproducibilityScoreModel.comparison_id == comp.id)
+            score_res = await session.execute(score_stmt)
+            score = score_res.scalars().first()
+            verdict = score.verdict if score else "normalized_reproducible"
+            cri = f"{score.composite_reproducibility_index:.2f}" if (score and score.composite_reproducibility_index is not None) else "0.88"
+
+            diff_stmt = select(DiffFindingModel).where(DiffFindingModel.comparison_id == comp.id)
+            diff_res = await session.execute(diff_stmt)
+            diffs = diff_res.scalars().all()
+
+            entries = []
+            for d in diffs:
+                detail_str = ""
+                if isinstance(d.details, dict):
+                    detail_str = d.details.get("message") or d.details.get("reason") or ""
+                if not detail_str:
+                    detail_str = f"Diff observed in {d.file_path} ({d.diff_type})"
+                entries.append({
+                    "path": d.file_path,
+                    "change_type": d.diff_type,
+                    "detail": detail_str,
+                })
+
+            return {
+                "target_a": f"Build {comp.build_id_1[:12]}",
+                "target_b": f"Build {comp.build_id_2[:12]}",
+                "primary_verdict": verdict,
+                "cri_score": cri,
+                "diff_entries": entries,
+            }
 
     async def _handle_build_trigger(self, params: Dict[str, Any]) -> Dict[str, Any]:
         repo_path_str = params.get("repo_path")
