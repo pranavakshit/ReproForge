@@ -1,0 +1,59 @@
+import { Theme } from "../theme.slint";
+
+export component ActionButton inherits Rectangle {
+    in property <string> label;
+    in property <string> variant: "secondary"; // primary | secondary | danger | ghost | success
+    in property <bool> disabled: false;
+    in property <length> font-size: 12px;
+    in property <length> btn-height: 32px;
+    in property <length> h-pad: 14px;
+    callback clicked();
+
+    height: root.btn-height;
+    border-radius: Theme.radius-sm;
+    border-width: 1px;
+
+    background: root.disabled ? Theme.bg-card : (
+        root.variant == "primary" ? (ta.has-hover ? #2563EB : Theme.accent-primary) :
+        root.variant == "danger" ? (ta.has-hover ? #451820 : Theme.status-danger-soft) :
+        root.variant == "success" ? (ta.has-hover ? #123B32 : Theme.status-success-soft) :
+        root.variant == "ghost" ? (ta.has-hover ? Theme.bg-hover : transparent) :
+        (ta.has-hover ? Theme.bg-hover : Theme.bg-elevated)
+    );
+
+    border-color: root.disabled ? Theme.border-subtle : (
+        root.variant == "primary" ? #60A5FA :
+        root.variant == "danger" ? Theme.status-danger :
+        root.variant == "success" ? Theme.status-success :
+        root.variant == "ghost" ? (ta.has-hover ? Theme.border-muted : transparent) :
+        (ta.has-hover ? Theme.border-active : Theme.border-muted)
+    );
+
+    HorizontalLayout {
+        padding-left: root.h-pad;
+        padding-right: root.h-pad;
+        spacing: 6px;
+        alignment: center;
+
+        @children
+
+        Text {
+            text: root.label;
+            color: root.disabled ? Theme.text-muted : (
+                root.variant == "primary" ? #FFFFFF :
+                root.variant == "danger" ? #FCA5A5 :
+                root.variant == "success" ? #6EE7B7 :
+                Theme.text-primary
+            );
+            font-size: root.font-size;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+    }
+
+    ta := TouchArea {
+        mouse-cursor: root.disabled ? default : pointer;
+        enabled: !root.disabled;
+        clicked => { root.clicked(); }
+    }
+}

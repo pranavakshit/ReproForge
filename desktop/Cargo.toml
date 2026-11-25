@@ -8,6 +8,12 @@ slint = { version = "1.19.0", features = ["renderer-femtovg", "renderer-software
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
+[target.'cfg(target_os = "windows")'.dependencies]
+rfd = { version = "0.15", default-features = false }
+
+[target.'cfg(not(target_os = "windows"))'.dependencies]
+rfd = { version = "0.15", default-features = false, features = ["xdg-portal"] }
+
 [build-dependencies]
 slint-build = "1.19.0"
 

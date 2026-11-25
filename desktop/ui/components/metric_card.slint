@@ -1,49 +1,51 @@
 import { Theme } from "../theme.slint";
-import { ShimmerBlock } from "shimmer.slint";
 
 export component MetricCard inherits Rectangle {
-    in property <string> title: "";
-    in property <string> value: "";
+    in property <string> label;
+    in property <string> value;
     in property <string> subtitle: "";
-    in property <color> value_color: Theme.text_primary;
-    in property <bool> is_loading: false;
-    in property <bool> motion_enabled: true;
-    in property <float> shimmer_progress: 0.0;
+    in property <color> accent_color: Theme.accent-primary;
 
-    background: Theme.bg_secondary;
-    border-radius: Theme.radius_md;
+    min-height: 92px;
+    background: Theme.bg-card;
+    border-radius: Theme.radius-md;
     border-width: 1px;
-    border-color: Theme.border_subtle;
+    border-color: Theme.border-subtle;
+
+    // Subtle top accent bar
+    Rectangle {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: 2px;
+        background: root.accent_color;
+    }
 
     VerticalLayout {
         padding: 14px;
-        alignment: space-between;
+        spacing: 6px;
 
         Text {
-            text: root.title;
+            text: root.label;
+            color: Theme.text-secondary;
             font-size: 11px;
             font-weight: 600;
-            color: Theme.text_muted;
-            letter-spacing: 0.5px;
+            letter-spacing: 0.4px;
         }
 
         Text {
             text: root.value;
+            color: Theme.text-primary;
             font-size: 24px;
             font-weight: 700;
-            color: root.value_color;
         }
 
         if root.subtitle != "": Text {
             text: root.subtitle;
+            color: root.accent_color;
             font-size: 11px;
-            color: Theme.text_dim;
+            font-weight: 500;
+            overflow: elide;
         }
-    }
-
-    ShimmerBlock {
-        is_loading: root.is_loading;
-        motion_enabled: root.motion_enabled;
-        shimmer_progress: root.shimmer_progress;
     }
 }

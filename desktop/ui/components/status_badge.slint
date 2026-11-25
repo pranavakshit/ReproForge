@@ -1,40 +1,59 @@
 import { Theme } from "../theme.slint";
 
 export component StatusBadge inherits Rectangle {
-    in property <string> text: "";
-    in property <string> variant: "exact"; // "exact", "norm", "warn", "inconclusive", "fail"
+    in property <string> text;
+    in property <string> kind: "neutral"; // success | warning | danger | info | neutral
 
     height: 22px;
-    border-radius: Theme.radius_sm;
+    border-radius: Theme.radius-pill;
     border-width: 1px;
 
-    background: (root.variant == "exact") ? Theme.status_exact_bg :
-                (root.variant == "norm") ? Theme.status_norm_bg :
-                (root.variant == "warn") ? Theme.status_warn_bg :
-                (root.variant == "inconclusive") ? Theme.status_inconclusive_bg :
-                Theme.status_fail_bg;
+    background:
+        kind == "success" ? Theme.status-success-soft :
+        kind == "warning" ? Theme.status-warning-soft :
+        kind == "danger" ? Theme.status-danger-soft :
+        kind == "info" ? Theme.status-info-soft :
+        Theme.bg-elevated;
 
-    border-color: (root.variant == "exact") ? Theme.status_exact_border :
-                  (root.variant == "norm") ? Theme.status_norm_border :
-                  (root.variant == "warn") ? Theme.status_warn_border :
-                  (root.variant == "inconclusive") ? Theme.status_inconclusive_border :
-                  Theme.status_fail_border;
+    border-color:
+        kind == "success" ? #14532D :
+        kind == "warning" ? #78350F :
+        kind == "danger" ? #7F1D1D :
+        kind == "info" ? #164E63 :
+        Theme.border-muted;
 
     HorizontalLayout {
-        padding-left: 8px;
-        padding-right: 8px;
+        padding-left: 9px;
+        padding-right: 9px;
+        spacing: 5px;
         alignment: center;
+
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 5px;
+                height: 5px;
+                border-radius: 3px;
+                background:
+                    kind == "success" ? Theme.status-success :
+                    kind == "warning" ? Theme.status-warning :
+                    kind == "danger" ? Theme.status-danger :
+                    kind == "info" ? Theme.status-info :
+                    Theme.text-secondary;
+            }
+        }
 
         Text {
             text: root.text;
-            font-size: 11px;
+            font-size: 10.5px;
             font-weight: 600;
             vertical-alignment: center;
-            color: (root.variant == "exact") ? Theme.status_exact :
-                   (root.variant == "norm") ? Theme.status_norm :
-                   (root.variant == "warn") ? Theme.status_warn :
-                   (root.variant == "inconclusive") ? Theme.status_inconclusive :
-                   Theme.status_fail;
+            color:
+                kind == "success" ? #6EE7B7 :
+                kind == "warning" ? #FCD34D :
+                kind == "danger" ? #FCA5A5 :
+                kind == "info" ? #67E8F9 :
+                Theme.text-secondary;
         }
     }
 }

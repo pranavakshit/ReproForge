@@ -1,310 +1,277 @@
+import { ListView } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
+import { PanelCard } from "../components/panel_card.slint";
+import { ProgressMeter } from "../components/progress_meter.slint";
 import { StatusBadge } from "../components/status_badge.slint";
 
 export struct DiffEntry {
     path: string,
-    change_type: string, // "modified", "metadata_drift", "identical", "added", "removed"
-    detail: string,
+    diff_type: string,
+    status: string,
+    size_delta: string,
+    snippet: string,
 }
 
 export struct DiagnosticFindingItem {
     rule_id: string,
+    severity: string,
     category: string,
-    confidence: string, // "HIGH", "MEDIUM", "LOW"
-    message: string,
-    epistemic_status: string, // "OBSERVED", "INFERRED", "HYPOTHESIS", "EXPERIMENTALLY_VALIDATED"
+    title: string,
+    epistemic_status: string,
+    summary: string,
+    remediation: string,
 }
 
 export component DiagnosticsView inherits Rectangle {
-    in property <string> comparison_id: "cmp-latest";
-    in property <string> target_a: "Build A (Windows 11 AMD64)";
-    in property <string> target_b: "Build B (Windows 11 AMD64)";
-    in property <string> primary_verdict: "normalized_reproducible";
-    in property <string> cri_score: "0.88";
-    in property <string> content_ratio: "1.00";
-    in property <string> metadata_ratio: "0.75";
+    in property <string> diag_target_a: "Awaiting Target A";
+    in property <string> diag_target_b: "Awaiting Target B";
+    in property <string> diag_verdict: "UNCOMPARED";
+    in property <float> cri_content: 0.0;
+    in property <float> cri_metadata: 0.0;
+    in property <float> cri_environment: 0.0;
     in property <[DiffEntry]> diff_entries: [];
+    in-out property <int> diff_selected_idx: -1;
+    in property <string> selected_diff_snippet: "";
     in property <[DiagnosticFindingItem]> diagnostic_findings: [];
 
-    background: Theme.bg_primary;
+    callback diff_entry_selected(int);
+
+    background: Theme.bg-canvas;
 
     VerticalLayout {
         padding: 20px;
         spacing: 14px;
-        alignment: start;
 
-        // View Header
-        HorizontalLayout {
-            alignment: space-between;
+        // Top Comparison Header + CRI Metric Vector Decomposition
+        PanelCard {
+            title: "Pairwise Comparison & CRI Metric Vector";
+            subtitle: "Granular archive diff inspection & evidence-backed root cause analysis";
+
             HorizontalLayout {
-                spacing: 10px;
-                Text {
-                    text: "Side-by-Side Artifact Comparison & Diagnostic Engine";
-                    font-size: 18px;
-                    font-weight: 700;
-                    color: Theme.text_primary;
-                    vertical-alignment: center;
-                }
-                Rectangle {
-                    height: 20px;
-                    border-radius: Theme.radius_sm;
-                    background: Theme.bg_card;
-                    border-width: 1px;
-                    border-color: Theme.border_light;
+                spacing: 16px;
+
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    spacing: 6px;
+                    Text { text: "MODE A: " + root.diag_target_a; color: Theme.text-code; font-size: 11.5px; font-weight: 600; overflow: elide; }
+                    Text { text: "MODE B: " + root.diag_target_b; color: Theme.text-code; font-size: 11.5px; font-weight: 600; overflow: elide; }
                     HorizontalLayout {
-                        padding-left: 6px; padding-right: 6px; alignment: center;
-                        Text { text: "Dual-Mode Differential"; font-size: 10px; font-weight: 600; color: Theme.accent_cyan; vertical-alignment: center; }
-                    }
-                }
-            }
-        }
-
-        // Comparison Pair & Dual-Mode Metrics Header Card
-        Rectangle {
-            height: 72px;
-            background: Theme.bg_secondary;
-            border-radius: Theme.radius_md;
-            border-width: 1px;
-            border-color: Theme.border_subtle;
-
-            HorizontalLayout {
-                padding: 12px;
-                spacing: 20px;
-                alignment: space-between;
-
-                HorizontalLayout {
-                    spacing: 16px;
-                    VerticalLayout {
-                        spacing: 2px;
-                        Text { text: "SIDE-BY-SIDE ARTIFACT PAIR"; font-size: 10px; font-weight: 600; color: Theme.text_dim; }
-                        Text { text: root.target_a + "  ⟷  " + root.target_b; font-size: 13px; font-weight: 600; color: Theme.text_primary; }
-                    }
-                }
-
-                HorizontalLayout {
-                    spacing: 16px;
-                    alignment: end;
-
-                    VerticalLayout {
-                        spacing: 2px;
-                        Text { text: "PRIMARY VERDICT"; font-size: 10px; font-weight: 600; color: Theme.text_dim; horizontal-alignment: end; }
+                        spacing: 8px;
+                        Text { text: "Verdict:"; color: Theme.text-muted; font-size: 11.5px; vertical-alignment: center; }
                         StatusBadge {
-                            text: root.primary_verdict;
-                            variant: (root.primary_verdict == "bit_for_bit_reproducible") ? "exact" :
-                                     (root.primary_verdict == "normalized_reproducible") ? "norm" : "warn";
+                            text: root.diag_verdict;
+                            kind:
+                                root.diag_verdict == "BIT_FOR_BIT" || root.diag_verdict == "REPRODUCIBLE" ? "success" :
+                                root.diag_verdict == "NORMALIZED" || root.diag_verdict == "EQUIVALENT" ? "info" :
+                                root.diag_verdict == "DRIFT" || root.diag_verdict == "DIVERGENT" || root.diag_verdict == "NON_REPRODUCIBLE" ? "warning" :
+                                "neutral";
                         }
                     }
+                }
 
-                    VerticalLayout {
-                        spacing: 2px;
-                        Text { text: "CRI DECOMPOSITION"; font-size: 10px; font-weight: 600; color: Theme.text_dim; horizontal-alignment: end; }
-                        Text { text: "Content: " + root.content_ratio + " | Meta: " + root.metadata_ratio; font-size: 11px; font-weight: 500; color: Theme.text_secondary; horizontal-alignment: end; }
+                HorizontalLayout {
+                    horizontal-stretch: 2;
+                    spacing: 14px;
+                    ProgressMeter {
+                        horizontal-stretch: 1;
+                        label: "Content Agreement";
+                        ratio: root.cri_content;
+                        fill-color: Theme.status-success;
                     }
-
-                    VerticalLayout {
-                        spacing: 2px;
-                        Text { text: "SECONDARY CRI INDEX"; font-size: 10px; font-weight: 600; color: Theme.text_dim; horizontal-alignment: end; }
-                        Text { text: root.cri_score + " / 1.00"; font-size: 14px; font-weight: 700; color: Theme.accent_cyan; horizontal-alignment: end; }
+                    ProgressMeter {
+                        horizontal-stretch: 1;
+                        label: "Metadata Agreement";
+                        ratio: root.cri_metadata;
+                        fill-color: Theme.accent-cyan;
+                    }
+                    ProgressMeter {
+                        horizontal-stretch: 1;
+                        label: "Env Consistency";
+                        ratio: root.cri_environment;
+                        fill-color: Theme.accent-indigo;
                     }
                 }
             }
         }
 
-        // Split Panel: Artifact Structural Diff + Diagnostic Evidence Trail
+        // Main Split: Left File/Byte Diffs + Right RCA Findings
         HorizontalLayout {
+            vertical-stretch: 1;
             spacing: 16px;
 
-            // Left: Artifact Tree Structural Diff (Mode A vs Mode B)
-            Rectangle {
+            // Left File-Level Diff Table + Snippet Preview
+            PanelCard {
                 horizontal-stretch: 3;
-                height: 480px;
-                background: Theme.bg_secondary;
-                border-radius: Theme.radius_md;
-                border-width: 1px;
-                border-color: Theme.border_subtle;
+                title: "Artifact Entry Differences (" + root.diff_entries.length + ")";
+                subtitle: "Click any entry to inspect bounded byte/text diff context";
 
-                VerticalLayout {
-                    padding: 14px;
-                    spacing: 10px;
-
-                    HorizontalLayout {
-                        alignment: space-between;
-                        Text { text: "Archive Member Differentials (Mode A vs Mode B)"; font-size: 13px; font-weight: 600; color: Theme.text_primary; }
-                        Text { text: "Byte vs Metadata Classification"; font-size: 10px; color: Theme.text_dim; }
+                if root.diff_entries.length == 0: Rectangle {
+                    vertical-stretch: 1;
+                    Text {
+                        text: "Bit-for-bit aligned or no divergence entries recorded for the latest comparison.";
+                        color: Theme.text-muted;
+                        font-size: 12px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        wrap: word-wrap;
                     }
+                }
 
-                    // Table Header
-                    Rectangle {
-                        height: 28px;
-                        background: Theme.bg_elevated;
-                        border-radius: Theme.radius_sm;
+                if root.diff_entries.length > 0: ListView {
+                    vertical-stretch: 2;
+                    for item[idx] in root.diff_entries: Rectangle {
+                        height: 44px;
+                        border-radius: Theme.radius-xs;
+                        background: idx == root.diff_selected_idx ? Theme.accent-primary-soft : (d-ta.has-hover ? Theme.bg-hover : Theme.bg-elevated);
+                        border-width: 1px;
+                        border-color: idx == root.diff_selected_idx ? Theme.accent-primary : Theme.border-subtle;
+
                         HorizontalLayout {
-                            padding-left: 10px; padding-right: 10px;
-                            Text { horizontal-stretch: 1; text: "ARTIFACT MEMBER PATH"; font-size: 11px; font-weight: 600; color: Theme.text_muted; vertical-alignment: center; }
-                            Text { width: 130px; text: "DIFF CLASSIFICATION"; font-size: 11px; font-weight: 600; color: Theme.text_muted; vertical-alignment: center; }
-                            Text { width: 220px; text: "DIAGNOSTIC EVIDENCE SUMMARY"; font-size: 11px; font-weight: 600; color: Theme.text_muted; vertical-alignment: center; }
+                            padding-left: 10px;
+                            padding-right: 10px;
+                            spacing: 10px;
+                            Text {
+                                text: item.path;
+                                color: Theme.text-primary;
+                                font-size: 11.5px;
+                                font-weight: 600;
+                                horizontal-stretch: 1;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                            Text {
+                                text: item.diff_type;
+                                color: Theme.text-secondary;
+                                font-size: 10.5px;
+                                width: 88px;
+                                vertical-alignment: center;
+                            }
+                            Text {
+                                text: item.size_delta;
+                                color: Theme.accent-cyan;
+                                font-size: 10.5px;
+                                width: 70px;
+                                vertical-alignment: center;
+                                horizontal-alignment: right;
+                            }
+                            VerticalLayout {
+                                alignment: center;
+                                StatusBadge {
+                                    text: item.status;
+                                    kind: item.status == "CONTENT" || item.status == "BYTE_DIFF" ? "danger" : "warning";
+                                }
+                            }
+                        }
+
+                        d-ta := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                root.diff_selected_idx = idx;
+                                root.diff_entry_selected(idx);
+                            }
                         }
                     }
+                }
 
-                    // Diff rows
+                // Inline Bounded Diff Snippet Viewer
+                if root.selected_diff_snippet != "": Rectangle {
+                    vertical-stretch: 1;
+                    min-height: 90px;
+                    background: Theme.bg-deep;
+                    border-radius: Theme.radius-sm;
+                    border-width: 1px;
+                    border-color: Theme.border-subtle;
+                    clip: true;
+
                     Flickable {
-                        height: 400px;
-                        content-height: (root.diff_entries.length * 44px) + 20px;
-
+                        content-height: snip.preferred-height + 16px;
                         VerticalLayout {
-                            spacing: 6px;
-                            padding-top: 2px;
-
-                            for entry in root.diff_entries : Rectangle {
-                                height: 38px;
-                                background: Theme.bg_card;
-                                border-radius: Theme.radius_sm;
-                                border-width: 1px;
-                                border-color: Theme.border_subtle;
-
-                                HorizontalLayout {
-                                    padding-left: 10px; padding-right: 10px;
-                                    alignment: space-between;
-
-                                    Text {
-                                        horizontal-stretch: 1;
-                                        text: entry.path;
-                                        font-size: 12px;
-                                        font-weight: 500;
-                                        color: Theme.text_primary;
-                                        vertical-alignment: center;
-                                        overflow: elide;
-                                    }
-                                    HorizontalLayout {
-                                        width: 130px;
-                                        alignment: start;
-                                        StatusBadge {
-                                            text: entry.change_type;
-                                            variant: (entry.change_type == "identical") ? "exact" :
-                                                     (entry.change_type == "metadata_drift") ? "norm" : "warn";
-                                        }
-                                    }
-                                    Text {
-                                        width: 220px;
-                                        text: entry.detail;
-                                        font-size: 11px;
-                                        color: Theme.text_dim;
-                                        vertical-alignment: center;
-                                        overflow: elide;
-                                    }
-                                }
+                            padding: 10px;
+                            snip := Text {
+                                text: root.selected_diff_snippet;
+                                color: Theme.text-code;
+                                font-size: 11px;
+                                wrap: word-wrap;
                             }
                         }
                     }
                 }
             }
 
-            // Right: Diagnostic Evidence Trail with Epistemic Status
-            Rectangle {
+            // Right Diagnostic Findings & Epistemic Provenance
+            PanelCard {
                 horizontal-stretch: 2;
-                height: 480px;
-                background: Theme.bg_secondary;
-                border-radius: Theme.radius_md;
-                border-width: 1px;
-                border-color: Theme.border_subtle;
+                title: "Diagnostic Root Causes (" + root.diagnostic_findings.length + ")";
+                subtitle: "Rule-based RCA findings tagged by epistemic validation";
 
-                VerticalLayout {
-                    padding: 14px;
-                    spacing: 10px;
-
-                    HorizontalLayout {
-                        alignment: space-between;
-                        Text {
-                            text: "Diagnostic Findings & Evidence Trail";
-                            font-size: 13px;
-                            font-weight: 600;
-                            color: Theme.text_primary;
-                        }
-                        Text { text: "Strict Epistemic Tiers"; font-size: 10px; color: Theme.accent_cyan; }
+                if root.diagnostic_findings.length == 0: Rectangle {
+                    vertical-stretch: 1;
+                    Text {
+                        text: "No root-cause anomalies triggered for this comparison.";
+                        color: Theme.text-muted;
+                        font-size: 12px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
                     }
+                }
 
-                    // Fired Rules & Evidence Cards
-                    Flickable {
-                        height: 290px;
-                        content-height: (root.diagnostic_findings.length * 110px) + 20px;
-
-                        VerticalLayout {
-                            spacing: 8px;
-                            for finding in root.diagnostic_findings : Rectangle {
-                                background: Theme.bg_card;
-                                border-radius: Theme.radius_sm;
-                                border-width: 1px;
-                                border-color: (finding.epistemic_status == "EXPERIMENTALLY_VALIDATED") ? Theme.status_inconclusive_border :
-                                              (finding.epistemic_status == "OBSERVED") ? Theme.status_exact_border :
-                                              (finding.epistemic_status == "INFERRED") ? Theme.status_norm_border : Theme.status_warn_border;
-                                padding: 10px;
-
-                                VerticalLayout {
-                                    spacing: 4px;
-                                    HorizontalLayout {
-                                        alignment: space-between;
-                                        Text { text: finding.rule_id; font-size: 12px; font-weight: 700; color: Theme.accent_cyan; }
-                                        StatusBadge {
-                                            text: finding.epistemic_status;
-                                            variant: (finding.epistemic_status == "OBSERVED") ? "exact" :
-                                                     (finding.epistemic_status == "INFERRED") ? "norm" :
-                                                     (finding.epistemic_status == "EXPERIMENTALLY_VALIDATED") ? "inconclusive" : "warn";
-                                        }
-                                    }
-                                    Text {
-                                        text: finding.category + " (" + finding.confidence + " Confidence)";
-                                        font-size: 11px;
-                                        font-weight: 600;
-                                        color: Theme.text_secondary;
-                                    }
-                                    Text {
-                                        text: finding.message;
-                                        font-size: 11px;
-                                        color: Theme.text_dim;
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // Epistemic Boundary Notice
-                    Rectangle {
-                        background: Theme.status_inconclusive_bg;
-                        border-radius: Theme.radius_sm;
+                if root.diagnostic_findings.length > 0: ListView {
+                    vertical-stretch: 1;
+                    for f in root.diagnostic_findings: Rectangle {
+                        min-height: 116px;
+                        background: Theme.bg-elevated;
+                        border-radius: Theme.radius-sm;
                         border-width: 1px;
-                        border-color: Theme.status_inconclusive_border;
-                        padding: 8px;
+                        border-color: Theme.border-subtle;
 
                         VerticalLayout {
-                            spacing: 3px;
-                            Text { text: "Epistemic Status Boundary"; font-size: 10px; font-weight: 700; color: Theme.status_inconclusive; }
-                            Text {
-                                text: "Rules classify observed variations deterministically. Remediation is hypothesis-level until validated via controlled perturbation.";
-                                font-size: 10px;
-                                color: #e9d5ff;
-                            }
-                        }
-                    }
+                            padding: 10px;
+                            spacing: 6px;
 
-                    // Remediation Guidance (Recommendation Only)
-                    Rectangle {
-                        background: Theme.bg_card;
-                        border-radius: Theme.radius_sm;
-                        padding: 8px;
-
-                        VerticalLayout {
-                            spacing: 4px;
-                            Text { text: "Recommended Action (Policy: Recommendation Only):"; font-size: 10px; font-weight: 600; color: Theme.text_muted; }
-                            Rectangle {
-                                background: Theme.bg_primary;
-                                border-radius: 4px;
-                                padding: 5px;
-                                Text {
-                                    text: "export SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct)";
-                                    font-size: 10px;
-                                    font-weight: 600;
-                                    color: Theme.accent_cyan;
+                            HorizontalLayout {
+                                spacing: 6px;
+                                StatusBadge {
+                                    text: f.epistemic_status;
+                                    kind:
+                                        f.epistemic_status == "EXPERIMENTALLY_VALIDATED" ? "success" :
+                                        f.epistemic_status == "OBSERVED" ? "info" :
+                                        f.epistemic_status == "INFERRED" ? "warning" :
+                                        "neutral";
                                 }
+                                StatusBadge {
+                                    text: f.severity;
+                                    kind: f.severity == "HIGH" || f.severity == "CRITICAL" ? "danger" : "warning";
+                                }
+                                Text {
+                                    text: f.category;
+                                    color: Theme.text-muted;
+                                    font-size: 10.5px;
+                                    horizontal-stretch: 1;
+                                    horizontal-alignment: right;
+                                    vertical-alignment: center;
+                                }
+                            }
+
+                            Text {
+                                text: f.title;
+                                color: Theme.text-primary;
+                                font-size: 12px;
+                                font-weight: 700;
+                                wrap: word-wrap;
+                            }
+
+                            Text {
+                                text: f.summary;
+                                color: Theme.text-secondary;
+                                font-size: 11px;
+                                wrap: word-wrap;
+                            }
+
+                            if f.remediation != "": Text {
+                                text: "Fix: " + f.remediation;
+                                color: #6EE7B7;
+                                font-size: 10.5px;
+                                wrap: word-wrap;
                             }
                         }
                     }

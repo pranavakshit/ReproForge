@@ -1,270 +1,162 @@
+import { ListView } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
+import { ActionButton } from "../components/action_button.slint";
+import { PanelCard } from "../components/panel_card.slint";
 import { StatusBadge } from "../components/status_badge.slint";
+import { IconCheck, IconPlay } from "../components/icons.slint";
 
 export struct RemediationProposal {
     id: string,
-    tier: string, // "LEVEL_1", "LEVEL_2", "LEVEL_3"
-    rule_category: string,
-    target_path: string,
-    summary: string,
-    patch_diff: string,
-    status: string, // "PENDING_APPROVAL", "APPLIED", "AUTO_REPAIRED", "MANUAL_REQUIRED"
+    tier: string,
+    title: string,
+    description: string,
+    patch_preview: string,
+    status: string,
+    confidence: string,
+    requires_approval: bool,
 }
 
 export component RemediationView inherits Rectangle {
     in property <[RemediationProposal]> proposals: [];
-    in property <int> selected_proposal_index: 0;
-    in property <string> verification_status: "Awaiting remediation action";
-    in property <bool> is_verifying: false;
+    in-out property <int> selected_proposal_idx: -1;
+
     callback proposal_selected(int);
     callback approve_patch_requested(string);
     callback run_verification_rebuild_requested();
 
-    background: Theme.bg_primary;
+    background: Theme.bg-canvas;
 
     VerticalLayout {
         padding: 20px;
-        spacing: 16px;
+        spacing: 14px;
 
-        // Header
-        HorizontalLayout {
-            alignment: space-between;
-            VerticalLayout {
-                spacing: 4px;
+        // Top 3-Tier Safety Policy Header
+        PanelCard {
+            inner-padding: 12px;
+            HorizontalLayout {
+                alignment: space-between;
+                spacing: 12px;
                 HorizontalLayout {
-                    spacing: 10px;
-                    Text {
-                        text: "Controlled Self-Healing & Remediation Cockpit";
-                        font-size: 18px;
-                        font-weight: 700;
-                        color: Theme.text_primary;
-                        vertical-alignment: center;
-                    }
-                    Rectangle {
-                        height: 20px;
-                        border-radius: Theme.radius_sm;
-                        background: Theme.status_norm_bg;
-                        border-width: 1px;
-                        border-color: Theme.status_norm_border;
-                        HorizontalLayout {
-                            padding-left: 8px; padding-right: 8px; alignment: center;
-                            Text {
-                                text: "3-Tier Safety Policy";
-                                font-size: 10px;
-                                font-weight: 600;
-                                color: Theme.status_norm;
-                                vertical-alignment: center;
-                            }
-                        }
-                    }
+                    spacing: 8px;
+                    StatusBadge { text: "L1: Disposable Sandbox Auto-Repair"; kind: "info"; }
+                    StatusBadge { text: "L2: Approval-Gated Patch"; kind: "warning"; }
+                    StatusBadge { text: "L3: Diagnosis Only"; kind: "neutral"; }
                 }
-                Text {
-                    text: "Graduated remediation system: Level 1 auto-repair in disposable worktrees, Level 2 interactive patch approval, Level 3 diagnosis only.";
-                    font-size: 12px;
-                    color: Theme.text_dim;
-                }
-            }
-
-            Rectangle {
-                width: 220px;
-                height: 36px;
-                background: Theme.accent_blue;
-                border-radius: Theme.radius_md;
-                verify_touch := TouchArea { clicked => { root.run_verification_rebuild_requested(); } }
-                HorizontalLayout {
-                    alignment: center;
-                    spacing: 6px;
-                    Text {
-                        text: root.is_verifying ? "⏳ Rebuilding..." : "▶ Run Verification Rebuild";
-                        font-size: 12px;
-                        font-weight: 600;
-                        color: Theme.text_primary;
-                        vertical-alignment: center;
-                    }
+                ActionButton {
+                    label: "Run Verification Rebuild";
+                    variant: "primary";
+                    btn-height: 30px;
+                    clicked => { root.run_verification_rebuild_requested(); }
+                    IconPlay { icon-size: 11px; icon-color: #FFFFFF; }
                 }
             }
         }
 
-        // Tier Explanatory Cards
         HorizontalLayout {
-            spacing: 12px;
-
-            Rectangle {
-                horizontal-stretch: 1;
-                height: 52px;
-                background: Theme.bg_secondary;
-                border-radius: Theme.radius_md;
-                border-width: 1px;
-                border-color: Theme.status_exact_border;
-                padding: 8px;
-                VerticalLayout {
-                    spacing: 2px;
-                    Text { text: "LEVEL 1: DISPOSABLE AUTO-REPAIR"; font-size: 10px; font-weight: 700; color: Theme.status_exact; }
-                    Text { text: "SOURCE_DATE_EPOCH / mtime normalization in scratch worktree. Zero persistent disk changes."; font-size: 10px; color: Theme.text_dim; }
-                }
-            }
-
-            Rectangle {
-                horizontal-stretch: 1;
-                height: 52px;
-                background: Theme.bg_secondary;
-                border-radius: Theme.radius_md;
-                border-width: 1px;
-                border-color: Theme.status_norm_border;
-                padding: 8px;
-                VerticalLayout {
-                    spacing: 2px;
-                    Text { text: "LEVEL 2: INTERACTIVE APPROVAL"; font-size: 10px; font-weight: 700; color: Theme.status_norm; }
-                    Text { text: "Generates unified diff patch for build scripts. Explicit user approval token required."; font-size: 10px; color: Theme.text_dim; }
-                }
-            }
-
-            Rectangle {
-                horizontal-stretch: 1;
-                height: 52px;
-                background: Theme.bg_secondary;
-                border-radius: Theme.radius_md;
-                border-width: 1px;
-                border-color: Theme.status_warn_border;
-                padding: 8px;
-                VerticalLayout {
-                    spacing: 2px;
-                    Text { text: "LEVEL 3: DIAGNOSIS ONLY"; font-size: 10px; font-weight: 700; color: Theme.status_warn; }
-                    Text { text: "Architectural drift (non-deterministic compiler, dynamic network fetches). Automated patching forbidden."; font-size: 10px; color: Theme.text_dim; }
-                }
-            }
-        }
-
-        // Main Split: Left Proposals List, Right Unified Diff Preview & Actions
-        HorizontalLayout {
+            vertical-stretch: 1;
             spacing: 16px;
 
             // Left Proposals List
-            Rectangle {
-                horizontal-stretch: 3;
-                background: Theme.bg_secondary;
-                border-radius: Theme.radius_md;
-                border-width: 1px;
-                border-color: Theme.border_subtle;
+            PanelCard {
+                horizontal-stretch: 2;
+                title: "Remediation Proposals (" + root.proposals.length + ")";
+                subtitle: "Evidence-derived fixes ordered by reproducibility safety tier";
 
-                VerticalLayout {
-                    padding: 14px;
-                    spacing: 10px;
+                if root.proposals.length == 0: Rectangle {
+                    vertical-stretch: 1;
+                    Text {
+                        text: "No remediation patches queued. Diagnostic findings generate ranked repair proposals here.";
+                        color: Theme.text-muted;
+                        font-size: 12px;
+                        wrap: word-wrap;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
 
-                    Text { text: "Active Remediation Proposals"; font-size: 13px; font-weight: 600; color: Theme.text_primary; }
-
-                    Flickable {
-                        height: 420px;
-                        content-height: (root.proposals.length * 84px) + 20px;
+                if root.proposals.length > 0: ListView {
+                    vertical-stretch: 1;
+                    for p[idx] in root.proposals: Rectangle {
+                        height: 76px;
+                        border-radius: Theme.radius-sm;
+                        background: idx == root.selected_proposal_idx ? Theme.accent-primary-soft : (p-ta.has-hover ? Theme.bg-hover : Theme.bg-elevated);
+                        border-width: 1px;
+                        border-color: idx == root.selected_proposal_idx ? Theme.accent-primary : Theme.border-subtle;
 
                         VerticalLayout {
-                            spacing: 8px;
-                            for prop[idx] in root.proposals : Rectangle {
-                                height: 74px;
-                                border-radius: Theme.radius_md;
-                                background: (root.selected_proposal_index == idx) ? Theme.bg_active :
-                                            (prop_touch.has_hover ? Theme.bg_hover : Theme.bg_card);
-                                border-width: 1px;
-                                border-color: (root.selected_proposal_index == idx) ? Theme.border_accent : Theme.border_subtle;
-                                padding: 10px;
+                            padding: 10px;
+                            spacing: 4px;
+                            HorizontalLayout {
+                                spacing: 6px;
+                                StatusBadge { text: p.tier; kind: p.tier == "LEVEL_1" ? "info" : (p.tier == "LEVEL_2" ? "warning" : "neutral"); }
+                                StatusBadge { text: p.status; kind: p.status == "VERIFIED" || p.status == "APPLIED" ? "success" : "neutral"; }
+                                Text { text: p.confidence; color: Theme.accent-cyan; font-size: 10.5px; horizontal-stretch: 1; horizontal-alignment: right; vertical-alignment: center; }
+                            }
+                            Text { text: p.title; color: Theme.text-primary; font-size: 12px; font-weight: 700; overflow: elide; }
+                            Text { text: p.description; color: Theme.text-secondary; font-size: 11px; overflow: elide; }
+                        }
 
-                                prop_touch := TouchArea { clicked => { root.proposal_selected(idx); } }
-
-                                VerticalLayout {
-                                    spacing: 4px;
-                                    HorizontalLayout {
-                                        alignment: space-between;
-                                        Text { text: prop.id + ": " + prop.rule_category; font-size: 12px; font-weight: 700; color: Theme.accent_cyan; }
-                                        StatusBadge {
-                                            text: prop.tier;
-                                            variant: (prop.tier == "LEVEL_1") ? "exact" :
-                                                     (prop.tier == "LEVEL_2") ? "norm" : "warn";
-                                        }
-                                    }
-                                    Text { text: prop.summary; font-size: 11px; color: Theme.text_secondary; overflow: elide; }
-                                    HorizontalLayout {
-                                        alignment: space-between;
-                                        Text { text: "Target: " + prop.target_path; font-size: 10px; color: Theme.text_dim; overflow: elide; }
-                                        StatusBadge {
-                                            text: prop.status;
-                                            variant: (prop.status == "APPLIED" || prop.status == "AUTO_REPAIRED") ? "exact" : "warn";
-                                        }
-                                    }
-                                }
+                        p-ta := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                root.selected_proposal_idx = idx;
+                                root.proposal_selected(idx);
                             }
                         }
                     }
                 }
             }
 
-            // Right Patch Preview & Action
-            Rectangle {
+            // Right Patch Diff & Approval Gate
+            PanelCard {
                 horizontal-stretch: 3;
-                background: Theme.bg_secondary;
-                border-radius: Theme.radius_md;
-                border-width: 1px;
-                border-color: Theme.border_subtle;
+                title: (root.selected_proposal_idx >= 0 && root.selected_proposal_idx < root.proposals.length)
+                    ? root.proposals[root.selected_proposal_idx].title
+                    : "Patch Diff & Disposable Verification Workspace";
+                subtitle: "Patches are applied only inside isolated copy workspaces until independently verified";
 
-                VerticalLayout {
-                    padding: 14px;
-                    spacing: 12px;
+                Rectangle {
+                    vertical-stretch: 1;
+                    background: Theme.bg-deep;
+                    border-radius: Theme.radius-sm;
+                    border-width: 1px;
+                    border-color: Theme.border-subtle;
+                    clip: true;
 
-                    HorizontalLayout {
-                        alignment: space-between;
-                        Text { text: "Unified Diff Patch Inspection"; font-size: 13px; font-weight: 600; color: Theme.text_primary; }
-                        // Approve button
-                        Rectangle {
-                            width: 160px;
-                            height: 30px;
-                            background: Theme.status_exact_bg;
-                            border-radius: Theme.radius_sm;
-                            border-width: 1px;
-                            border-color: Theme.status_exact_border;
-                            approve_touch := TouchArea {
-                                clicked => {
-                                    if (root.selected_proposal_index < root.proposals.length) {
-                                        root.approve_patch_requested(root.proposals[root.selected_proposal_index].id);
-                                    }
-                                }
-                            }
-                            HorizontalLayout {
-                                alignment: center;
-                                Text { text: "✓ Approve & Apply Patch"; font-size: 11px; font-weight: 600; color: Theme.status_exact; vertical-alignment: center; }
+                    Flickable {
+                        content-height: patch-txt.preferred-height + 20px;
+                        VerticalLayout {
+                            padding: 12px;
+                            patch-txt := Text {
+                                text: (root.selected_proposal_idx >= 0 && root.selected_proposal_idx < root.proposals.length)
+                                    ? root.proposals[root.selected_proposal_idx].patch_preview
+                                    : "Select a remediation proposal on the left to inspect its unified diff before approval.";
+                                color: Theme.text-code;
+                                font-size: 11.5px;
+                                wrap: word-wrap;
                             }
                         }
                     }
+                }
 
-                    // Unified diff text
-                    Rectangle {
-                        height: 340px;
-                        background: Theme.bg_primary;
-                        border-radius: Theme.radius_sm;
-                        padding: 10px;
-
-                        Flickable {
-                            height: 320px;
-                            Text {
-                                text: (root.selected_proposal_index < root.proposals.length) ?
-                                      root.proposals[root.selected_proposal_index].patch_diff :
-                                      "--- /dev/null\n+++ build.sh\n@@ -1,2 +1,3 @@\n+export SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct)\n";
-                                font-size: 11px;
-                                color: Theme.text_secondary;
-                            }
-                        }
+                if root.selected_proposal_idx >= 0 && root.selected_proposal_idx < root.proposals.length: HorizontalLayout {
+                    alignment: space-between;
+                    Text {
+                        text: root.proposals[root.selected_proposal_idx].requires_approval
+                            ? "Requires explicit user approval before workspace repair."
+                            : "Safe deterministic repair (isolated disposable copy).";
+                        color: Theme.text-secondary;
+                        font-size: 11px;
+                        vertical-alignment: center;
                     }
-
-                    // Rebuild verification status pill
-                    Rectangle {
-                        height: 36px;
-                        background: Theme.bg_elevated;
-                        border-radius: Theme.radius_sm;
-                        padding-left: 10px;
-                        padding-right: 10px;
-                        HorizontalLayout {
-                            alignment: space-between;
-                            Text { text: "Post-Repair Verification:"; font-size: 11px; font-weight: 600; color: Theme.text_dim; vertical-alignment: center; }
-                            Text { text: root.verification_status; font-size: 11px; font-weight: 600; color: Theme.status_exact; vertical-alignment: center; }
+                    ActionButton {
+                        label: "Approve & Test in Disposable Workspace";
+                        variant: "success";
+                        btn-height: 32px;
+                        clicked => {
+                            root.approve_patch_requested(root.proposals[root.selected_proposal_idx].id);
                         }
+                        IconCheck { icon-size: 12px; icon-color: #6EE7B7; }
                     }
                 }
             }

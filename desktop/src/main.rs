@@ -1,272 +1,455 @@
-slint::include_modules!();
-
 mod data;
 
-use std::rc::Rc;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
-use slint::{ModelRc, VecModel};
+use std::time::{Duration, Instant};
+
+use slint::{ComponentHandle, Model, ModelRc, VecModel};
+
+use data::{BuildRecord, RepoRecord, RevisionRecord, WorkspaceCandidateRecord};
 use reproforge_desktop::ipc::client::IpcClient;
-use reproforge_desktop::supervisor::{ProcessSupervisor, SupervisorStatus};
-use data::{
-    generate_mock_builds, get_sample_diff_entries, get_sample_repositories,
-    get_sample_revisions, MockBuildRow,
-};
+use reproforge_desktop::supervisor::{find_repo_root, ProcessSupervisor, SupervisorStatus};
 
-#[cfg(target_os = "windows")]
-fn is_system_animation_enabled() -> bool {
-    #[link(name = "user32")]
-    extern "system" {
-        fn SystemParametersInfoW(ui_action: u32, ui_param: u32, pv_param: *mut i32, f_win_ini: u32) -> i32;
-    }
-    let mut enabled: i32 = 1;
-    unsafe {
-        // SPI_GETCLIENTAREAANIMATION = 0x1042
-        SystemParametersInfoW(0x1042, 0, &mut enabled, 0);
-    }
-    enabled != 0
-}
+slint::include_modules!();
 
-#[cfg(not(target_os = "windows"))]
-fn is_system_animation_enabled() -> bool {
-    true
-}
+const MAX_LOG_BYTES: usize = 65_536;
 
 fn detect_renderer_backend() -> (String, bool) {
-    if let Ok(backend) = std::env::var("SLINT_BACKEND") {
-        if backend == "software" {
-            return ("Software Rasterizer (CPU Fallback)".into(), true);
-        } else if backend == "femtovg" {
-            return ("Hardware Accelerated (Femtovg/OpenGL)".into(), false);
-        } else if backend == "skia" {
-            return ("Hardware Accelerated (Skia/Direct3D)".into(), false);
-        }
-    }
-    ("Hardware Accelerated (Auto/Femtovg)".into(), false)
+    let backend = std::env::var("SLINT_BACKEND").unwrap_or_default().to_lowercase();
+    let is_sw = backend.contains("software");
+    let label = if is_sw {
+        "Software (CPU)".to_string()
+    } else if backend.contains("femtovg") || backend.is_empty() {
+        "Hardware (FemtoVG)".to_string()
+    } else {
+        backend
+    };
+    (label, is_sw)
 }
 
-#[derive(Clone)]
 struct AppState {
-    all_builds: Vec<MockBuildRow>,
-    filtered_builds: Vec<MockBuildRow>,
+    builds: Vec<BuildRecord>,
+    repos: Vec<RepoRecord>,
+    candidates: Vec<WorkspaceCandidateRecord>,
+    diffs: Vec<DiffEntry>,
+    graph_nodes: Vec<GraphNodeItem>,
+    selected_repo_idx: usize,
+    selected_revision_sha: String,
+    selected_backend_type: String,
     search_query: String,
-    verdict_filter: i32,
+    log_buffer: String,
+    last_log_flush: Instant,
+    active_build_count: i32,
 }
 
 impl AppState {
-    fn new(builds: Vec<MockBuildRow>) -> Self {
+    fn new(initial_builds: Vec<BuildRecord>) -> Self {
         Self {
-            filtered_builds: builds.clone(),
-            all_builds: builds,
+            builds: initial_builds,
+            repos: Vec::new(),
+            candidates: Vec::new(),
+            diffs: Vec::new(),
+            graph_nodes: Vec::new(),
+            selected_repo_idx: 0,
+            selected_revision_sha: "HEAD".to_string(),
+            selected_backend_type: "local".to_string(),
             search_query: String::new(),
-            verdict_filter: 0,
+            log_buffer: String::new(),
+            last_log_flush: Instant::now() - Duration::from_secs(1),
+            active_build_count: 0,
         }
     }
 
-    fn apply_filter(&mut self) {
-        let q = self.search_query.to_lowercase();
-        self.filtered_builds = self
-            .all_builds
-            .iter()
-            .filter(|b| {
-                // Text search match
-                let matches_search = q.is_empty()
-                    || b.build_id.to_lowercase().contains(&q)
-                    || b.commit_sha.to_lowercase().contains(&q)
-                    || b.backend.to_lowercase().contains(&q);
-
-                // Verdict filter match (0: All, 1: Exact, 2: Norm, 3: Inconclusive)
-                let matches_verdict = match self.verdict_filter {
-                    1 => b.verdict == "bit_for_bit_reproducible",
-                    2 => b.verdict == "normalized_reproducible",
-                    3 => b.verdict == "inconclusive",
-                    _ => true,
-                };
-
-                matches_search && matches_verdict
-            })
-            .cloned()
-            .collect();
+    fn append_log_chunk(&mut self, chunk: &str, force: bool) -> Option<String> {
+        if !chunk.is_empty() {
+            if !self.log_buffer.is_empty() && !self.log_buffer.ends_with('\n') {
+                self.log_buffer.push('\n');
+            }
+            self.log_buffer.push_str(chunk);
+            if self.log_buffer.len() > MAX_LOG_BYTES {
+                let trim_at = self.log_buffer.len() - MAX_LOG_BYTES;
+                if let Some(pos) = self.log_buffer[trim_at..].find('\n') {
+                    self.log_buffer.drain(..trim_at + pos + 1);
+                } else {
+                    self.log_buffer.drain(..trim_at);
+                }
+            }
+        }
+        if force || self.last_log_flush.elapsed() >= Duration::from_millis(120) {
+            self.last_log_flush = Instant::now();
+            Some(self.log_buffer.clone())
+        } else {
+            None
+        }
     }
 }
 
-fn populate_builds_ui(ui: &MainWindow, state: &AppState) {
-    let row_models: Vec<BuildRowData> = state
-        .filtered_builds
-        .iter()
-        .map(|b| BuildRowData {
-            build_id: b.build_id.clone().into(),
-            commit_sha: b.commit_sha.clone().into(),
-            backend: b.backend.clone().into(),
-            status: b.status.clone().into(),
-            verdict: b.verdict.clone().into(),
-            duration: format!("{:.1}s", b.duration_seconds).into(),
-        })
-        .collect();
+fn to_slint_build(b: &BuildRecord) -> BuildRowData {
+    BuildRowData {
+        build_id: b.build_id.clone().into(),
+        repo: b.repo.clone().into(),
+        commit: b.commit.clone().into(),
+        backend: b.backend.clone().into(),
+        status: b.status.clone().into(),
+        verdict: b.verdict.clone().into(),
+        hash_short: b.hash_short.clone().into(),
+    }
+}
 
-    ui.set_builds_total_count(state.all_builds.len() as i32);
-    ui.set_builds_filtered_count(state.filtered_builds.len() as i32);
-    ui.set_build_rows(ModelRc::from(Rc::new(VecModel::from(row_models))));
+fn to_slint_repo(r: &RepoRecord) -> RepoItem {
+    RepoItem {
+        id: r.id.clone().into(),
+        name: r.name.clone().into(),
+        url: r.url.clone().into(),
+        branch: r.branch.clone().into(),
+        build_system: r.build_system.clone().into(),
+        revisions_count: r.revisions_count,
+        github_slug: r.github_slug.clone().into(),
+        upstream_url: r.upstream_url.clone().into(),
+        readiness_status: r.readiness_status.clone().into(),
+        readiness_warnings: r.readiness_warnings.clone().into(),
+        last_scanned: r.last_scanned.clone().into(),
+    }
+}
+
+fn to_slint_revision(r: &RevisionRecord) -> RevisionItem {
+    RevisionItem {
+        sha: r.sha.clone().into(),
+        message: r.message.clone().into(),
+        author: r.author.clone().into(),
+        date: r.date.clone().into(),
+    }
+}
+
+fn to_slint_candidate(c: &WorkspaceCandidateRecord) -> WorkspaceCandidateItem {
+    WorkspaceCandidateItem {
+        name: c.name.clone().into(),
+        repo_path: c.repo_path.clone().into(),
+        default_branch: c.default_branch.clone().into(),
+        github_slug: c.github_slug.clone().into(),
+        upstream_url: c.upstream_url.clone().into(),
+        already_tracked: c.already_tracked,
+        checked: c.checked,
+    }
+}
+
+fn push_builds_to_ui(ui: &MainWindow, state: &AppState) {
+    let q = state.search_query.trim().to_lowercase();
+    let rows: Vec<BuildRowData> = state
+        .builds
+        .iter()
+        .filter(|b| {
+            q.is_empty()
+                || b.build_id.to_lowercase().contains(&q)
+                || b.repo.to_lowercase().contains(&q)
+                || b.commit.to_lowercase().contains(&q)
+                || b.status.to_lowercase().contains(&q)
+                || b.verdict.to_lowercase().contains(&q)
+        })
+        .map(to_slint_build)
+        .collect();
+    ui.set_builds(ModelRc::new(VecModel::from(rows)));
+}
+
+fn push_repos_to_ui(ui: &MainWindow, state: &AppState) {
+    let q = state.search_query.trim().to_lowercase();
+    let rows: Vec<RepoItem> = state
+        .repos
+        .iter()
+        .filter(|r| {
+            q.is_empty()
+                || r.name.to_lowercase().contains(&q)
+                || r.github_slug.to_lowercase().contains(&q)
+                || r.build_system.to_lowercase().contains(&q)
+        })
+        .map(to_slint_repo)
+        .collect();
+    ui.set_repos(ModelRc::new(VecModel::from(rows)));
+}
+
+fn push_candidates_to_ui(ui: &MainWindow, state: &AppState) {
+    let items: Vec<WorkspaceCandidateItem> = state.candidates.iter().map(to_slint_candidate).collect();
+    let selected_cnt = state.candidates.iter().filter(|c| c.checked).count();
+    ui.set_workspace_candidates(ModelRc::new(VecModel::from(items)));
+    ui.set_workspace_checklist_status(
+        format!("{} of {} repositories selected for tracking", selected_cnt, state.candidates.len()).into(),
+    );
 }
 
 fn sync_overview(ui_handle: slint::Weak<MainWindow>, client: &IpcClient) {
     if let Ok(val) = client.send_request("overview.get_metrics", None, Duration::from_secs(5)) {
-        let total_builds = val.get("total_builds").and_then(|v| v.as_i64()).unwrap_or(22);
-        
-        let b4b_rate = val.get("bit_for_bit_rate")
-            .and_then(|v| v.as_str().map(|s| s.to_string()).or_else(|| v.as_f64().map(|f| format!("{:.1}%", f))))
-            .unwrap_or_else(|| "33.3%".to_string());
-            
-        let norm_rate = val.get("normalized_rate")
-            .and_then(|v| v.as_str().map(|s| s.to_string()).or_else(|| v.as_f64().map(|f| format!("{:.1}%", f))))
-            .unwrap_or_else(|| "100.0%".to_string());
-            
-        let unresolved = val.get("unresolved_count").and_then(|v| v.as_i64()).unwrap_or(0);
-        
-        let host_os = val.get("telemetry")
-            .and_then(|t| t.get("os_name"))
-            .and_then(|v| v.as_str())
-            .map(|os| {
-                let rel = val.get("telemetry").and_then(|t| t.get("os_release")).and_then(|v| v.as_str()).unwrap_or("");
-                format!("{} {}", os, rel)
+        let total_builds = val["total_builds"].as_u64().unwrap_or(0);
+        let total_comps = val["total_comparisons"].as_u64().unwrap_or(0);
+        let bfb = val["bit_for_bit_rate"].as_f64().unwrap_or(0.0);
+        let norm = val["normalized_rate"].as_f64().unwrap_or(0.0);
+        let unresolved = val["unresolved_count"].as_u64().unwrap_or(0);
+
+        let tel = &val["telemetry"];
+        let os_name = tel["os_name"].as_str().unwrap_or("Unknown OS").to_string();
+        let os_rel = tel["os_release"].as_str().unwrap_or("").to_string();
+        let arch = tel["cpu_arch"].as_str().unwrap_or("—").to_string();
+        let cores = tel["cpu_count"].as_u64().unwrap_or(0);
+        let ram = tel["ram_gb"].as_f64().unwrap_or(0.0);
+        let toolchains = tel["detected_toolchains"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str())
+                    .collect::<Vec<_>>()
+                    .join("  •  ")
             })
-            .or_else(|| val.get("host_os").and_then(|v| v.as_str()).map(|s| s.to_string()))
-            .unwrap_or_else(|| "Windows 11 (AMD64)".to_string());
+            .unwrap_or_else(|| "None detected".to_string());
+        let docker_ver = tel["docker_cli_version"]
+            .as_str()
+            .unwrap_or("Not Detected")
+            .to_string();
+        let docker_ok = !docker_ver.to_lowercase().contains("not installed")
+            && !docker_ver.to_lowercase().contains("not detected")
+            && !docker_ver.is_empty();
+        let db_path = tel["database_path"]
+            .as_str()
+            .unwrap_or("data/reproforge.db")
+            .to_string();
 
-        let host_cpu = val.get("telemetry")
-            .and_then(|t| t.get("cpu_count"))
-            .and_then(|v| v.as_i64())
-            .map(|cores| {
-                let ram = val.get("telemetry").and_then(|t| t.get("ram_gb")).and_then(|v| v.as_f64()).unwrap_or(23.7);
-                format!("{} Cores | {:.1} GB RAM", cores, ram)
+        let recent: Vec<RecentBuildItem> = val["recent_builds"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .map(|b| RecentBuildItem {
+                        build_id: b["build_id"].as_str().unwrap_or("—").into(),
+                        repo: b["repo"].as_str().unwrap_or("unknown").into(),
+                        revision: b["revision"].as_str().unwrap_or("HEAD").into(),
+                        backend: b["backend"].as_str().unwrap_or("local").into(),
+                        status: b["status"].as_str().unwrap_or("unknown").into(),
+                        verdict: b["verdict"].as_str().unwrap_or("UNCOMPARED").into(),
+                    })
+                    .collect()
             })
-            .or_else(|| val.get("host_cpu").and_then(|v| v.as_str()).map(|s| s.to_string()))
-            .unwrap_or_else(|| "20 Cores | 23.7 GB RAM".to_string());
+            .unwrap_or_default();
 
-        let host_storage = val.get("host_storage").and_then(|v| v.as_str()).unwrap_or("SQLite 3 WAL (data/reproforge.db)").to_string();
-
-        let mut recent_items = Vec::new();
-        if let Some(recent) = val.get("recent_builds").and_then(|v| v.as_array()) {
-            for b in recent {
-                recent_items.push(RecentBuildItem {
-                    build_id: b.get("id").or_else(|| b.get("build_id")).and_then(|v| v.as_str()).unwrap_or("").into(),
-                    commit_sha: b.get("commit_sha").and_then(|v| v.as_str()).unwrap_or("HEAD").chars().take(8).collect::<String>().into(),
-                    backend: b.get("backend").and_then(|v| v.as_str()).unwrap_or("isolated-local").into(),
-                    status: b.get("status").and_then(|v| v.as_str()).unwrap_or("COMPLETED").into(),
-                    verdict: b.get("verdict").and_then(|v| v.as_str()).unwrap_or("bit_for_bit_reproducible").into(),
-                    duration: b.get("duration").and_then(|v| v.as_str()).map(|s| s.to_string()).unwrap_or_else(|| {
-                        format!("{:.1}s", b.get("duration_seconds").and_then(|v| v.as_f64()).unwrap_or(2.1))
-                    }).into(),
-                });
-            }
-        }
+        let bfb_ratio = (bfb / 100.0).clamp(0.0, 1.0) as f32;
+        let norm_ratio = (norm / 100.0).clamp(0.0, 1.0) as f32;
+        let drift_ratio = ((100.0 - norm).max(0.0) / 100.0).clamp(0.0, 1.0) as f32;
 
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(ui) = ui_handle.upgrade() {
-                ui.set_total_builds(format!("{}", total_builds).into());
-                ui.set_bit_for_bit_rate(b4b_rate.into());
-                ui.set_normalized_rate(norm_rate.into());
-                ui.set_unresolved_count(format!("{}", unresolved).into());
-                ui.set_overview_host_os(host_os.into());
-                ui.set_overview_host_cpu(host_cpu.into());
-                ui.set_overview_host_storage(host_storage.into());
-                ui.set_overview_telemetry_badge("Live Daemon & Database Connected".into());
-                if !recent_items.is_empty() {
-                    ui.set_recent_builds(ModelRc::from(Rc::new(VecModel::from(recent_items))));
-                }
+                ui.set_total_builds(total_builds.to_string().into());
+                ui.set_total_comparisons(total_comps.to_string().into());
+                ui.set_bit_for_bit_rate(format!("{:.1}%", bfb).into());
+                ui.set_normalized_rate(format!("{:.1}%", norm).into());
+                ui.set_unresolved_count(unresolved.to_string().into());
+                ui.set_cri_bit_ratio(bfb_ratio);
+                ui.set_cri_norm_ratio(norm_ratio);
+                ui.set_cri_drift_ratio(drift_ratio);
+
+                ui.set_host_os(format!("{} {}", os_name, os_rel).trim().into());
+                ui.set_host_arch(format!("{} • {} cores • {:.1} GB", arch, cores, ram).into());
+                ui.set_detected_toolchains(toolchains.into());
+                ui.set_docker_cli_version(docker_ver.into());
+                ui.set_docker_available(docker_ok);
+                ui.set_database_path(db_path.clone().into());
+                ui.set_storage_db_path(db_path.into());
+                ui.set_recent_builds(ModelRc::new(VecModel::from(recent)));
             }
         });
     }
 }
 
-fn sync_repositories(ui_handle: slint::Weak<MainWindow>, client: &IpcClient, selected_repo_idx: usize) {
-    let mut repos_list = Vec::new();
-    let resp = client.send_request("repository.list", None, Duration::from_secs(5));
-    let repos_val = resp.ok();
+fn sync_revisions_for_repo(ui_handle: slint::Weak<MainWindow>, client: &IpcClient, state: &Arc<Mutex<AppState>>, repo_id: &str) {
+    let rev_params = serde_json::json!({ "repository_id": repo_id, "limit": 25 });
+    if let Ok(rev_resp) = client.send_request("repository.get_revisions", Some(rev_params), Duration::from_secs(5)) {
+        let revs: Vec<RevisionRecord> = rev_resp["revisions"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .map(|rev| {
+                        let sha = rev["sha"].as_str().unwrap_or("HEAD");
+                        RevisionRecord {
+                            sha: sha.chars().take(10).collect(),
+                            message: rev["message"].as_str().unwrap_or("").into(),
+                            author: rev["author"].as_str().unwrap_or("").into(),
+                            date: rev["date"].as_str().unwrap_or("").chars().take(10).collect(),
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
 
-    let mut repo_ids = Vec::new();
-    if let Some(val) = repos_val {
-        if let Some(arr) = val.get("repositories").and_then(|a| a.as_array()) {
-            for r in arr {
-                let id = r.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let name = r.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let remote_url = r.get("repo_url").and_then(|v| v.as_str()).unwrap_or(".").to_string();
-                let default_branch = r.get("default_branch").and_then(|v| v.as_str()).unwrap_or("main").to_string();
-                let build_system = r.get("build_system").and_then(|v| v.as_str()).unwrap_or("Cargo / Python / Docker").to_string();
-                let rev_count = r.get("revisions_count").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
-                repo_ids.push(id.clone());
-                repos_list.push(RepoItem {
-                    id: id.into(),
-                    name: name.into(),
-                    remote_url: remote_url.into(),
-                    default_branch: default_branch.into(),
-                    build_system: build_system.into(),
-                    revisions_count: rev_count,
+        if let Some(first) = revs.first() {
+            if let Ok(mut s) = state.lock() {
+                s.selected_revision_sha = first.sha.clone();
+            }
+        }
+        let ui_revs: Vec<RevisionItem> = revs.iter().map(to_slint_revision).collect();
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Some(ui) = ui_handle.upgrade() {
+                ui.set_revisions(ModelRc::new(VecModel::from(ui_revs)));
+                ui.set_selected_revision_idx(0);
+            }
+        });
+    }
+}
+
+fn sync_repositories(ui_handle: slint::Weak<MainWindow>, client: &IpcClient, state: Arc<Mutex<AppState>>, selected_idx: usize) {
+    if let Ok(val) = client.send_request("repository.list", None, Duration::from_secs(5)) {
+        let repos: Vec<RepoRecord> = val["repositories"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .map(|r| {
+                        let warnings = r["readiness_warnings"]
+                            .as_array()
+                            .map(|w| {
+                                w.iter()
+                                    .filter_map(|v| v.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join(" | ")
+                            })
+                            .unwrap_or_default();
+                        RepoRecord {
+                            id: r["id"].as_str().unwrap_or("").to_string(),
+                            name: r["name"].as_str().unwrap_or("Unnamed").to_string(),
+                            url: r["repo_url"].as_str().unwrap_or("").to_string(),
+                            branch: r["default_branch"].as_str().unwrap_or("main").to_string(),
+                            build_system: r["build_system"].as_str().unwrap_or("generic").to_string(),
+                            revisions_count: r["revisions_count"].as_i64().unwrap_or(0) as i32,
+                            github_slug: r["github_slug"].as_str().unwrap_or("").to_string(),
+                            upstream_url: r["upstream_github_url"].as_str().unwrap_or("").to_string(),
+                            readiness_status: r["readiness_status"].as_str().unwrap_or("unknown").to_string(),
+                            readiness_warnings: warnings,
+                            last_scanned: r["last_scanned_at"].as_str().unwrap_or("").chars().take(19).collect(),
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let clamped_idx = if repos.is_empty() { 0 } else { selected_idx.min(repos.len() - 1) };
+        let selected_id = repos.get(clamped_idx).map(|r| r.id.clone());
+
+        {
+            if let Ok(mut s) = state.lock() {
+                s.repos = repos;
+                s.selected_repo_idx = clamped_idx;
+            }
+        }
+
+        let ui_clone = ui_handle.clone();
+        let state_clone = state.clone();
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Some(ui) = ui_clone.upgrade() {
+                if let Ok(s) = state_clone.lock() {
+                    push_repos_to_ui(&ui, &s);
+                    ui.set_selected_repo_idx(clamped_idx as i32);
+                }
+            }
+        });
+
+        if let Some(id) = selected_id {
+            sync_revisions_for_repo(ui_handle, client, &state, &id);
+        }
+    }
+}
+
+fn sync_builds(ui_handle: slint::Weak<MainWindow>, client: &IpcClient, state: Arc<Mutex<AppState>>) {
+    if let Ok(resp) = client.send_request("build.list", None, Duration::from_secs(5)) {
+        if let Some(arr) = resp["builds"].as_array() {
+            let mut records = Vec::with_capacity(arr.len());
+            let mut running = 0i32;
+            for b in arr {
+                let status = b["status"].as_str().unwrap_or("unknown").to_string();
+                if status == "running" || status == "pending" {
+                    running += 1;
+                }
+                records.push(BuildRecord {
+                    build_id: b["build_id"].as_str().unwrap_or("—").to_string(),
+                    repo: b["repo_name"].as_str().unwrap_or("unknown").to_string(),
+                    commit: b["commit_sha"].as_str().unwrap_or("HEAD").chars().take(8).collect(),
+                    backend: b["backend"].as_str().unwrap_or("local").to_string(),
+                    status,
+                    verdict: b["verdict"].as_str().unwrap_or("UNCOMPARED").to_string(),
+                    hash_short: b["primary_hash"]
+                        .as_str()
+                        .unwrap_or("—")
+                        .chars()
+                        .take(18)
+                        .collect(),
                 });
             }
-        }
-    }
 
-    let target_repo_id = if !repo_ids.is_empty() {
-        let idx = if selected_repo_idx < repo_ids.len() { selected_repo_idx } else { 0 };
-        Some(repo_ids[idx].clone())
-    } else {
-        None
-    };
+            if let Ok(mut s) = state.lock() {
+                s.builds = records;
+                s.active_build_count = running;
+            }
 
-    let mut rev_items = Vec::new();
-    if let Some(ref r_id) = target_repo_id {
-        let rev_params = serde_json::json!({
-            "repository_id": r_id,
-            "limit": 50
-        });
-        if let Ok(rev_resp) = client.send_request("repository.get_revisions", Some(rev_params), Duration::from_secs(5)) {
-            if let Some(rev_arr) = rev_resp.get("revisions").and_then(|a| a.as_array()) {
-                for r in rev_arr {
-                    let commit_sha = r.get("commit_sha").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    let author = r.get("author").or_else(|| r.get("author_name")).and_then(|v| v.as_str()).unwrap_or("Pranav Akshit").to_string();
-                    let message = r.get("commit_message").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    let timestamp = r.get("committed_at").or_else(|| r.get("created_at")).and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    rev_items.push(RevisionItem {
-                        commit_sha: commit_sha.into(),
-                        author: author.into(),
-                        message: message.into(),
-                        timestamp: timestamp.into(),
-                        is_pinned: false,
-                    });
+            let state_clone = state.clone();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(ui) = ui_handle.upgrade() {
+                    if let Ok(s) = state_clone.lock() {
+                        push_builds_to_ui(&ui, &s);
+                        ui.set_active_build_count(s.active_build_count);
+                    }
                 }
-            }
+            });
         }
     }
-
-    let _ = slint::invoke_from_event_loop(move || {
-        if let Some(ui) = ui_handle.upgrade() {
-            if !repos_list.is_empty() {
-                ui.set_repositories(ModelRc::from(Rc::new(VecModel::from(repos_list))));
-            }
-            if !rev_items.is_empty() {
-                ui.set_revisions(ModelRc::from(Rc::new(VecModel::from(rev_items))));
-            }
-        }
-    });
 }
 
-fn sync_diagnostics(ui_handle: slint::Weak<MainWindow>, client: &IpcClient) {
+fn sync_diagnostics(ui_handle: slint::Weak<MainWindow>, client: &IpcClient, state: Arc<Mutex<AppState>>) {
     if let Ok(val) = client.send_request("comparison.get_latest", None, Duration::from_secs(5)) {
-        let target_a = val.get("target_a").and_then(|v| v.as_str()).unwrap_or("Build A").to_string();
-        let target_b = val.get("target_b").and_then(|v| v.as_str()).unwrap_or("Build B").to_string();
-        let verdict = val.get("primary_verdict").and_then(|v| v.as_str()).unwrap_or("normalized_reproducible").to_string();
-        let cri = val.get("cri_score").and_then(|v| v.as_str()).unwrap_or("0.88").to_string();
+        if val["id"].is_null() {
+            return;
+        }
+        let target_a = val["build_a_id"].as_str().unwrap_or("—").to_string();
+        let target_b = val["build_b_id"].as_str().unwrap_or("—").to_string();
+        let verdict = val["verdict"].as_str().unwrap_or("UNCOMPARED").to_string();
+        let cri_c = val["content_agreement_ratio"].as_f64().unwrap_or(0.0).clamp(0.0, 1.0) as f32;
+        let cri_m = val["metadata_agreement_ratio"].as_f64().unwrap_or(0.0).clamp(0.0, 1.0) as f32;
+        let cri_e = val["environment_consistency_score"].as_f64().unwrap_or(0.0).clamp(0.0, 1.0) as f32;
 
-        let mut diff_items = Vec::new();
-        if let Some(arr) = val.get("diff_entries").and_then(|a| a.as_array()) {
-            for d in arr {
-                diff_items.push(DiffEntry {
-                    path: d.get("path").and_then(|v| v.as_str()).unwrap_or("").into(),
-                    change_type: d.get("change_type").and_then(|v| v.as_str()).unwrap_or("metadata_drift").into(),
-                    detail: d.get("detail").and_then(|v| v.as_str()).unwrap_or("").into(),
-                });
-            }
+        let diffs: Vec<DiffEntry> = val["diff_entries"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .map(|d| DiffEntry {
+                        path: d["relative_path"].as_str().unwrap_or("unknown").into(),
+                        diff_type: d["diff_type"].as_str().unwrap_or("CONTENT").into(),
+                        status: d["diff_type"].as_str().unwrap_or("DRIFT").into(),
+                        size_delta: format!(
+                            "{} B -> {} B",
+                            d["size_a"].as_i64().unwrap_or(0),
+                            d["size_b"].as_i64().unwrap_or(0)
+                        )
+                        .into(),
+                        snippet: d["diff_snippet"].as_str().unwrap_or("").into(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let findings: Vec<DiagnosticFindingItem> = val["diagnostic_findings"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .map(|f| DiagnosticFindingItem {
+                        rule_id: f["rule_id"].as_str().unwrap_or("RCA").into(),
+                        severity: f["severity"].as_str().unwrap_or("MEDIUM").into(),
+                        category: f["category"].as_str().unwrap_or("ENVIRONMENT").into(),
+                        title: f["title"].as_str().unwrap_or("Diagnostic Finding").into(),
+                        epistemic_status: f["epistemic_status"].as_str().unwrap_or("INFERRED").into(),
+                        summary: f["summary"].as_str().unwrap_or("").into(),
+                        remediation: f["suggested_remediation"].as_str().unwrap_or("").into(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let first_snippet = diffs
+            .first()
+            .map(|d| d.snippet.to_string())
+            .unwrap_or_default();
+
+        if let Ok(mut s) = state.lock() {
+            s.diffs = diffs.clone();
         }
 
         let _ = slint::invoke_from_event_loop(move || {
@@ -274,225 +457,341 @@ fn sync_diagnostics(ui_handle: slint::Weak<MainWindow>, client: &IpcClient) {
                 ui.set_diag_target_a(target_a.into());
                 ui.set_diag_target_b(target_b.into());
                 ui.set_diag_verdict(verdict.into());
-                ui.set_diag_cri(cri.into());
-                if !diff_items.is_empty() {
-                    ui.set_diff_entries(ModelRc::from(Rc::new(VecModel::from(diff_items))));
-                }
+                ui.set_cri_content(cri_c);
+                ui.set_cri_metadata(cri_m);
+                ui.set_cri_environment(cri_e);
+                ui.set_diff_entries(ModelRc::new(VecModel::from(diffs)));
+                ui.set_selected_diff_snippet(first_snippet.into());
+                ui.set_diff_selected_idx(0);
+                ui.set_diagnostic_findings(ModelRc::new(VecModel::from(findings)));
             }
         });
     }
 }
 
-fn sync_builds(ui_handle: slint::Weak<MainWindow>, client: &IpcClient, state: Arc<Mutex<AppState>>) {
-    if let Ok(resp) = client.send_request("build.list", None, Duration::from_secs(5)) {
-        if let Some(arr) = resp.get("builds").and_then(|a| a.as_array()) {
-            if !arr.is_empty() {
-                let mut builds = Vec::new();
-                for b in arr {
-                    builds.push(MockBuildRow {
-                        build_id: b.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                        commit_sha: b.get("commit_sha").and_then(|v| v.as_str()).unwrap_or("HEAD").chars().take(8).collect::<String>(),
-                        backend: b.get("backend").or_else(|| b.get("profile_name")).and_then(|v| v.as_str()).unwrap_or("isolated-local").to_string(),
-                        status: b.get("status").and_then(|v| v.as_str()).unwrap_or("COMPLETED").to_string(),
-                        verdict: b.get("verdict").and_then(|v| v.as_str()).unwrap_or("bit_for_bit_reproducible").to_string(),
-                        duration_seconds: b.get("duration_seconds").and_then(|v| v.as_f64()).unwrap_or(2.1),
-                    });
-                }
-                let s_clone = {
-                    let mut s = state.lock().unwrap();
-                    s.all_builds = builds;
-                    s.apply_filter();
-                    s.clone()
-                };
-                let _ = slint::invoke_from_event_loop(move || {
-                    if let Some(ui) = ui_handle.upgrade() {
-                        populate_builds_ui(&ui, &s_clone);
-                    }
-                });
-            }
-        }
+fn infer_node_tier(node_type: &str) -> i32 {
+    let lower = node_type.to_lowercase();
+    if lower.contains("rev") || lower.contains("repo") {
+        0
+    } else if lower.contains("build") {
+        1
+    } else if lower.contains("env") || lower.contains("finger") {
+        2
+    } else if lower.contains("diff") || lower.contains("artifact") {
+        3
+    } else {
+        4
     }
 }
 
-fn main() -> Result<(), slint::PlatformError> {
-    // Process command line arguments for renderer override
-    for arg in std::env::args() {
-        if arg == "--renderer=software" {
-            std::env::set_var("SLINT_BACKEND", "software");
-        } else if arg == "--renderer=hardware" {
-            std::env::set_var("SLINT_BACKEND", "femtovg");
+fn sync_causality_graph(ui_handle: slint::Weak<MainWindow>, client: &IpcClient, state: Arc<Mutex<AppState>>) {
+    if let Ok(val) = client.send_request("causality.get_graph", None, Duration::from_secs(5)) {
+        let nodes: Vec<GraphNodeItem> = val["nodes"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .map(|n| {
+                        let node_type = n["node_type"].as_str().unwrap_or("Node").to_string();
+                        let tier = n["tier"]
+                            .as_i64()
+                            .map(|t| t as i32)
+                            .unwrap_or_else(|| infer_node_tier(&node_type));
+                        GraphNodeItem {
+                            id: n["id"].as_str().unwrap_or("").into(),
+                            node_type: node_type.into(),
+                            label: n["label"].as_str().unwrap_or("Node").into(),
+                            subtitle: n["subtitle"]
+                                .as_str()
+                                .or_else(|| n["details"].as_str())
+                                .unwrap_or("")
+                                .into(),
+                            epistemic_status: n["epistemic_status"]
+                                .as_str()
+                                .unwrap_or("OBSERVED")
+                                .to_uppercase()
+                                .into(),
+                            tier,
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let edges: Vec<GraphEdgeItem> = val["edges"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .map(|e| GraphEdgeItem {
+                        source_id: e["source_id"].as_str().unwrap_or("").into(),
+                        target_id: e["target_id"].as_str().unwrap_or("").into(),
+                        relation: e["relation"].as_str().unwrap_or("CAUSES").into(),
+                        epistemic_status: e["epistemic_status"]
+                            .as_str()
+                            .unwrap_or("INFERRED")
+                            .to_uppercase()
+                            .into(),
+                        evidence: e["evidence"].as_str().unwrap_or("").into(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        if let Ok(mut s) = state.lock() {
+            s.graph_nodes = nodes.clone();
         }
+
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Some(ui) = ui_handle.upgrade() {
+                ui.set_graph_nodes(ModelRc::new(VecModel::from(nodes)));
+                ui.set_graph_edges(ModelRc::new(VecModel::from(edges)));
+            }
+        });
+    }
+}
+
+fn sync_all_views(ui_handle: slint::Weak<MainWindow>, client: &IpcClient, state: &Arc<Mutex<AppState>>) {
+    sync_overview(ui_handle.clone(), client);
+    let sel_repo = state.lock().map(|s| s.selected_repo_idx).unwrap_or(0);
+    sync_repositories(ui_handle.clone(), client, state.clone(), sel_repo);
+    sync_builds(ui_handle.clone(), client, state.clone());
+    sync_diagnostics(ui_handle.clone(), client, state.clone());
+    sync_causality_graph(ui_handle, client, state.clone());
+}
+
+fn run_scan_folder_ipc(
+    ui_handle: slint::Weak<MainWindow>,
+    supervisor: Arc<ProcessSupervisor>,
+    state: Arc<Mutex<AppState>>,
+    path_str: String,
+    fetch_online: bool,
+) {
+    let trimmed = path_str.trim().to_string();
+    if trimmed.is_empty() {
+        return;
     }
 
-    let (renderer_name, is_software) = detect_renderer_backend();
-    println!("REPROFORGE_RENDERER_ACTIVE: {}", renderer_name);
+    std::thread::spawn(move || {
+        let Some(client) = supervisor.get_client() else {
+            let ui_c = ui_handle.clone();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(ui) = ui_c.upgrade() {
+                    ui.set_status_banner("Backend IPC daemon is not connected yet.".into());
+                }
+            });
+            return;
+        };
 
-    let main_window = MainWindow::new()?;
-
-    // 1. Set Native OS Motion Preference
-    let motion_enabled = is_system_animation_enabled();
-    main_window.set_motion_enabled(motion_enabled);
-
-    // 2. Set App Header & Initial Engine Status
-    main_window.set_engine_status("Engine Starting...".into());
-    main_window.set_active_backend(renderer_name.clone().into());
-    main_window.set_is_software_renderer(is_software);
-
-    // 3. Load Initial Datasets (100% Genuine Baseline Data)
-    let all_builds = generate_mock_builds(22);
-
-    // Populate Overview with Genuine Baseline Data
-    main_window.set_total_builds("22".into());
-    main_window.set_bit_for_bit_rate("33.3%".into());
-    main_window.set_normalized_rate("100.0%".into());
-    main_window.set_unresolved_count("0".into());
-    main_window.set_overview_host_os("Windows 11 (AMD64)".into());
-    main_window.set_overview_host_cpu("20 Cores | 23.7 GB RAM".into());
-    main_window.set_overview_host_storage("SQLite 3 WAL (data/reproforge.db)".into());
-    main_window.set_overview_telemetry_badge("Live Daemon & Database Connected".into());
-
-    let recent_slice: Vec<RecentBuildItem> = all_builds
-        .iter()
-        .take(8)
-        .map(|b| RecentBuildItem {
-            build_id: b.build_id.clone().into(),
-            commit_sha: b.commit_sha.clone().into(),
-            backend: b.backend.clone().into(),
-            status: b.status.clone().into(),
-            verdict: b.verdict.clone().into(),
-            duration: format!("{:.1}s", b.duration_seconds).into(),
-        })
-        .collect();
-    main_window.set_recent_builds(ModelRc::from(Rc::new(VecModel::from(recent_slice))));
-
-    // Populate Repositories View with Real Repositories
-    let repos: Vec<RepoItem> = get_sample_repositories()
-        .into_iter()
-        .map(|r| RepoItem {
-            id: r.id.into(),
-            name: r.name.into(),
-            remote_url: r.remote_url.into(),
-            default_branch: r.default_branch.into(),
-            build_system: r.build_system.into(),
-            revisions_count: r.revisions_count,
-        })
-        .collect();
-    main_window.set_repositories(ModelRc::from(Rc::new(VecModel::from(repos))));
-
-    let revisions: Vec<RevisionItem> = get_sample_revisions()
-        .into_iter()
-        .map(|r| RevisionItem {
-            commit_sha: r.commit_sha.into(),
-            author: r.author.into(),
-            message: r.message.into(),
-            timestamp: r.timestamp.into(),
-            is_pinned: r.is_pinned,
-        })
-        .collect();
-    main_window.set_revisions(ModelRc::from(Rc::new(VecModel::from(revisions))));
-
-    // Populate Diff & Diagnostics View with Real Comparison Findings
-    main_window.set_diag_target_a("Build bld-offl-00001 (LocAi / IOCL)".into());
-    main_window.set_diag_target_b("Build bld-offl-00002 (Normalized Rebuild)".into());
-    main_window.set_diag_verdict("normalized_reproducible".into());
-    main_window.set_diag_cri("0.88".into());
-
-    let diff_items: Vec<DiffEntry> = get_sample_diff_entries()
-        .into_iter()
-        .map(|d| DiffEntry {
-            path: d.path.into(),
-            change_type: d.change_type.into(),
-            detail: d.detail.into(),
-        })
-        .collect();
-    main_window.set_diff_entries(ModelRc::from(Rc::new(VecModel::from(diff_items))));
-
-    // 4. Initialize Builds State
-    let state = Arc::new(Mutex::new(AppState::new(all_builds)));
-    {
-        let s = state.lock().unwrap();
-        populate_builds_ui(&main_window, &s);
-    }
-
-    // Shared Build Execution State
-    let log_buffer = Arc::new(Mutex::new(String::from(
-        "[ReproForge Live Console]\nSelect a build to inspect logs or click '▶ Trigger Isolated Build' to execute a live reproducible build.\n",
-    )));
-    let active_build_id = Arc::new(Mutex::new(Option::<String>::None));
-
-    // 5. Start Engine Supervisor & Attach Notifications
-    let supervisor = Arc::new(ProcessSupervisor::new());
-
-    // Register Notification Callback for live build streaming
-    let handle_notif = main_window.as_weak();
-    let log_buf_notif = log_buffer.clone();
-    let state_notif = state.clone();
-    let sup_notif = supervisor.clone();
-    let active_bid_notif = active_build_id.clone();
-    supervisor.on_notification(move |method, params| {
-        match method {
-            "build.progress" => {
-                if let Some(p) = params {
-                    let phase = p.get("phase").and_then(|v| v.as_str()).unwrap_or("RUNNING").to_uppercase();
-                    let percent = p.get("percent").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32 / 100.0;
-                    let message = p.get("message").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    if let Some(bid) = p.get("build_id").and_then(|v| v.as_str()) {
-                        *active_bid_notif.lock().unwrap() = Some(bid.to_string());
+        // Direct remote GitHub URL -> register + autoscan directly
+        if trimmed.starts_with("http://") || trimmed.starts_with("https://") || trimmed.starts_with("git@") {
+            let name_guess = trimmed
+                .trim_end_matches('/')
+                .trim_end_matches(".git")
+                .rsplit('/')
+                .next()
+                .unwrap_or("github-repo")
+                .to_string();
+            let reg_params = serde_json::json!({
+                "name": name_guess,
+                "repo_url": trimmed,
+                "repo_type": "remote",
+                "default_branch": "main",
+            });
+            if let Ok(reg_res) = client.send_request("repository.register", Some(reg_params), Duration::from_secs(10)) {
+                if let Some(repo_id) = reg_res["id"].as_str() {
+                    let scan_p = serde_json::json!({
+                        "repository_id": repo_id,
+                        "fetch_online_metadata": fetch_online,
+                    });
+                    let _ = client.send_request("repository.autoscan", Some(scan_p), Duration::from_secs(20));
+                }
+                sync_repositories(ui_handle.clone(), &client, state, 0);
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = ui_handle.upgrade() {
+                        ui.set_status_banner(format!("Registered & scanned remote repository: {}", trimmed).into());
                     }
-                    let handle = handle_notif.clone();
+                });
+            }
+            return;
+        }
+
+        // Local directory / workspace folder inspection
+        let params = serde_json::json!({ "folder_path": trimmed });
+        match client.send_request("repository.scan_folder", Some(params), Duration::from_secs(15)) {
+            Ok(val) => {
+                let mode = val["mode"].as_str().unwrap_or("empty");
+                let folder = val["folder"].as_str().unwrap_or(&trimmed).to_string();
+                let candidates: Vec<WorkspaceCandidateRecord> = val["candidates"]
+                    .as_array()
+                    .map(|arr| {
+                        arr.iter()
+                            .map(|c| {
+                                let tracked = c["already_tracked"].as_bool().unwrap_or(false);
+                                WorkspaceCandidateRecord {
+                                    name: c["name"].as_str().unwrap_or("Repo").to_string(),
+                                    repo_path: c["repo_path"].as_str().unwrap_or("").to_string(),
+                                    default_branch: c["default_branch"].as_str().unwrap_or("main").to_string(),
+                                    github_slug: c["github_slug"].as_str().unwrap_or("").to_string(),
+                                    upstream_url: c["upstream_github_url"].as_str().unwrap_or("").to_string(),
+                                    already_tracked: tracked,
+                                    checked: !tracked,
+                                }
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                if mode == "single_repo" && candidates.len() == 1 {
+                    let c = &candidates[0];
+                    let batch = serde_json::json!({
+                        "items": [{
+                            "name": c.name,
+                            "repo_path": c.repo_path,
+                            "default_branch": c.default_branch,
+                        }],
+                        "fetch_online_metadata": fetch_online,
+                    });
+                    let _ = client.send_request("repository.register_batch", Some(batch), Duration::from_secs(25));
+                    sync_repositories(ui_handle.clone(), &client, state, 0);
+                    let slug_note = if c.github_slug.is_empty() {
+                        "local git".to_string()
+                    } else {
+                        format!("GitHub: {}", c.github_slug)
+                    };
+                    let msg = format!("Tracked '{}' and completed static GitHub autoscan ({}).", c.name, slug_note);
                     let _ = slint::invoke_from_event_loop(move || {
-                        if let Some(ui) = handle.upgrade() {
-                            ui.set_is_build_running(true);
-                            ui.set_live_build_status(phase.into());
-                            ui.set_live_build_progress(percent);
-                            ui.set_live_build_message(message.into());
+                        if let Some(ui) = ui_handle.upgrade() {
+                            ui.set_status_banner(msg.into());
+                        }
+                    });
+                } else if !candidates.is_empty() {
+                    if let Ok(mut s) = state.lock() {
+                        s.candidates = candidates;
+                    }
+                    let state_c = state.clone();
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = ui_handle.upgrade() {
+                            if let Ok(s) = state_c.lock() {
+                                push_candidates_to_ui(&ui, &s);
+                            }
+                            ui.set_workspace_folder_path(folder.into());
+                            ui.set_show_workspace_checklist(true);
+                        }
+                    });
+                } else {
+                    let msg = format!("No Git repositories found inside '{}'. Select a repository or parent workspace folder.", folder);
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = ui_handle.upgrade() {
+                            ui.set_status_banner(msg.into());
                         }
                     });
                 }
             }
-            "build.log_chunk" => {
-                if let Some(p) = params {
-                    if let Some(chunk) = p.get("chunk").and_then(|v| v.as_str()) {
-                        let mut buf = log_buf_notif.lock().unwrap();
-                        buf.push_str(chunk);
-                        if buf.len() > 60_000 {
-                            let drain_idx = buf.len() - 40_000;
-                            *buf = buf[drain_idx..].to_string();
-                        }
-                        let current_text = buf.clone();
-                        let handle = handle_notif.clone();
-                        let _ = slint::invoke_from_event_loop(move || {
-                            if let Some(ui) = handle.upgrade() {
-                                ui.set_live_log_text(current_text.into());
-                            }
-                        });
+            Err(e) => {
+                let msg = format!("Folder scan failed: {}", e);
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = ui_handle.upgrade() {
+                        ui.set_status_banner(msg.into());
                     }
+                });
+            }
+        }
+    });
+}
+
+fn main() -> Result<(), slint::PlatformError> {
+    let mut bench_records: Option<usize> = None;
+    for arg in std::env::args() {
+        if arg == "--renderer=software" {
+            std::env::set_var("SLINT_BACKEND", "winit-software");
+        } else if arg == "--renderer=hardware" {
+            std::env::set_var("SLINT_BACKEND", "winit-femtovg");
+        }
+    }
+    if let Ok(val) = std::env::var("REPROFORGE_BENCH_RECORDS") {
+        if let Ok(parsed) = val.parse::<usize>() {
+            bench_records = Some(parsed);
+        }
+    }
+
+    let (renderer_name, _is_software) = detect_renderer_backend();
+    println!("REPROFORGE_RENDERER_ACTIVE: {}", renderer_name);
+
+    let main_window = MainWindow::new()?;
+    main_window.set_engine_backend(renderer_name.into());
+
+    // Initial state: strictly real data when launched normally; synthetic rows only under explicit benchmark harness
+    let initial_builds = bench_records
+        .map(data::generate_benchmark_builds)
+        .unwrap_or_default();
+    let state = Arc::new(Mutex::new(AppState::new(initial_builds)));
+    if bench_records.is_some() {
+        if let Ok(s) = state.lock() {
+            push_builds_to_ui(&main_window, &s);
+        }
+    }
+
+    // Start Python IPC Daemon Supervisor
+    let supervisor = Arc::new(ProcessSupervisor::new());
+    let ui_handle = main_window.as_weak();
+    let state_notif = state.clone();
+    let sup_notif = supervisor.clone();
+
+    supervisor.on_notification(move |method, params| {
+        let ui_h = ui_handle.clone();
+        let st = state_notif.clone();
+        let sup = sup_notif.clone();
+        let empty = serde_json::Value::Null;
+        let p = params.unwrap_or(&empty);
+        match method {
+            "build.progress" => {
+                let msg = p["message"].as_str().unwrap_or("").to_string();
+                let maybe_full = st.lock().ok().and_then(|mut s| s.append_log_chunk(&msg, true));
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = ui_h.upgrade() {
+                        ui.set_active_build_count(1);
+                        if let Some(buf) = maybe_full {
+                            ui.set_selected_build_log(buf.into());
+                        }
+                    }
+                });
+            }
+            "build.log_chunk" => {
+                let chunk = p["chunk"]
+                    .as_str()
+                    .or_else(|| p["line"].as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let maybe_full = st.lock().ok().and_then(|mut s| s.append_log_chunk(&chunk, false));
+                if let Some(buf) = maybe_full {
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = ui_h.upgrade() {
+                            ui.set_selected_build_log(buf.into());
+                        }
+                    });
                 }
             }
             "build.completed" => {
-                let duration = params.and_then(|p| p.get("duration_seconds")).and_then(|v| v.as_f64()).unwrap_or(0.0);
-                let status = params.and_then(|p| p.get("status")).and_then(|v| v.as_str()).unwrap_or("COMPLETED").to_string();
-                let msg = format!("Build finished in {:.1}s (status: {})", duration, status);
-                let handle = handle_notif.clone();
+                let status_str = p["status"].as_str().unwrap_or("completed").to_string();
+                let sha = p["primary_hash"].as_str().unwrap_or("—").to_string();
+                let maybe_full = st
+                    .lock()
+                    .ok()
+                    .and_then(|mut s| s.append_log_chunk(&format!("[Engine] Build finished: {}", status_str), true));
+
+                let ui_h2 = ui_h.clone();
                 let _ = slint::invoke_from_event_loop(move || {
-                    if let Some(ui) = handle.upgrade() {
-                        ui.set_is_build_running(false);
-                        ui.set_live_build_status(status.into());
-                        ui.set_live_build_progress(1.0);
-                        ui.set_live_build_message(msg.into());
+                    if let Some(ui) = ui_h2.upgrade() {
+                        ui.set_active_build_count(0);
+                        ui.set_selected_hash(sha.into());
+                        if let Some(buf) = maybe_full {
+                            ui.set_selected_build_log(buf.into());
+                        }
                     }
                 });
 
-                // Auto-sync metrics, build table, and diagnostics after build completion
-                let handle_sync = handle_notif.clone();
-                let sup = sup_notif.clone();
-                let st = state_notif.clone();
                 std::thread::spawn(move || {
-                    std::thread::sleep(Duration::from_millis(300));
                     if let Some(client) = sup.get_client() {
-                        sync_overview(handle_sync.clone(), &client);
-                        sync_builds(handle_sync.clone(), &client, st);
-                        sync_diagnostics(handle_sync, &client);
+                        sync_all_views(ui_h, &client, &st);
                     }
                 });
             }
@@ -500,39 +799,35 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     });
 
-    // Supervisor Status Updates & Auto-sync on Connection
-    let handle_status = main_window.as_weak();
+    let ui_stat = main_window.as_weak();
     let sup_sync = supervisor.clone();
-    let state_sync = state.clone();
+    let st_sync = state.clone();
     supervisor.on_status_change(move |status| {
-        let status_str = match status {
-            SupervisorStatus::Stopped => "Engine Stopped".to_string(),
-            SupervisorStatus::Starting => "Engine Starting...".to_string(),
-            SupervisorStatus::Connected { pid, .. } => format!("Engine Connected (PID {})", pid),
+        let (text, healthy) = match &status {
+            SupervisorStatus::Stopped => ("Engine Stopped".to_string(), false),
+            SupervisorStatus::Starting => ("Engine Starting...".to_string(), false),
+            SupervisorStatus::Connected { pid, .. } => (format!("Connected (PID {})", pid), true),
             SupervisorStatus::Reconnecting { attempt, max_attempts } => {
-                format!("Engine Reconnecting ({}/{})", attempt, max_attempts)
+                (format!("Reconnecting ({}/{})...", attempt, max_attempts), false)
             }
-            SupervisorStatus::Failed(err) => format!("Engine Failed: {}", err),
+            SupervisorStatus::Failed(err) => (format!("Engine Error: {}", err), false),
         };
-        let handle = handle_status.clone();
+
+        let ui_h = ui_stat.clone();
         let _ = slint::invoke_from_event_loop(move || {
-            if let Some(ui) = handle.upgrade() {
-                ui.set_engine_status(status_str.into());
+            if let Some(ui) = ui_h.upgrade() {
+                ui.set_engine_status(text.into());
+                ui.set_engine_healthy(healthy);
             }
         });
 
-        // If newly connected, trigger background data sync from live Python engine
         if let SupervisorStatus::Connected { .. } = status {
-            let handle_init = handle_status.clone();
-            let sup = sup_sync.clone();
-            let st = state_sync.clone();
+            let ui_h2 = ui_stat.clone();
+            let sup2 = sup_sync.clone();
+            let st2 = st_sync.clone();
             std::thread::spawn(move || {
-                std::thread::sleep(Duration::from_millis(150));
-                if let Some(client) = sup.get_client() {
-                    sync_overview(handle_init.clone(), &client);
-                    sync_repositories(handle_init.clone(), &client, 0);
-                    sync_builds(handle_init.clone(), &client, st);
-                    sync_diagnostics(handle_init, &client);
+                if let Some(client) = sup2.get_client() {
+                    sync_all_views(ui_h2, &client, &st2);
                 }
             });
         }
@@ -540,210 +835,489 @@ fn main() -> Result<(), slint::PlatformError> {
 
     supervisor.start();
 
-    // 6. Connect Search and Filter Callbacks
-    let state_search = state.clone();
-    let handle_search = main_window.as_weak();
-    main_window.on_search_query_changed(move |query| {
-        if let Some(ui) = handle_search.upgrade() {
-            let mut s = state_search.lock().unwrap();
+    // Wire Callbacks: Search Filter
+    let st_search = state.clone();
+    let ui_search = main_window.as_weak();
+    main_window.on_search_changed(move |query| {
+        if let Ok(mut s) = st_search.lock() {
             s.search_query = query.to_string();
-            s.apply_filter();
-            populate_builds_ui(&ui, &s);
-        }
-    });
-
-    let state_filter = state.clone();
-    let handle_filter = main_window.as_weak();
-    main_window.on_verdict_filter_changed(move |filter_idx| {
-        if let Some(ui) = handle_filter.upgrade() {
-            let mut s = state_filter.lock().unwrap();
-            s.verdict_filter = filter_idx;
-            s.apply_filter();
-            populate_builds_ui(&ui, &s);
-        }
-    });
-
-    // Connect Build Row Selection
-    let state_select = state.clone();
-    let handle_select = main_window.as_weak();
-    main_window.on_build_row_clicked(move |idx| {
-        if let Some(ui) = handle_select.upgrade() {
-            let s = state_select.lock().unwrap();
-            if let Some(row) = s.filtered_builds.get(idx as usize) {
-                ui.set_selected_build_id(row.build_id.clone().into());
-                ui.set_selected_commit_sha(row.commit_sha.clone().into());
-                ui.set_selected_backend(row.backend.clone().into());
-                ui.set_selected_verdict(row.verdict.clone().into());
-                ui.set_selected_hash(format!("sha256:{:016x}c44298fc1c149afbf4c8996fb92427ae41e4", idx * 104729).into());
-                ui.set_live_log_text(format!(
-                    "[ReproForge Build Log Inspector]\nBuild ID: {}\nCommit SHA: {}\nBackend: {}\nVerdict: {}\nDuration: {:.2}s\nStatus: {}\nLog Path: build_workspaces/{}/{}.log\nExecution successful.\n",
-                    row.build_id, row.commit_sha, row.backend, row.verdict, row.duration_seconds, row.status, row.build_id, row.build_id
-                ).into());
+            if let Some(ui) = ui_search.upgrade() {
+                push_builds_to_ui(&ui, &s);
+                push_repos_to_ui(&ui, &s);
             }
         }
     });
 
-    // 7. Connect Interactive Presentation Callbacks
-    // Ctrl+R or Header Refresh
-    let handle_refresh = main_window.as_weak();
-    let sup_refresh = supervisor.clone();
-    let state_refresh = state.clone();
+    // Wire Callbacks: Manual Full Refresh
+    let ui_ref = main_window.as_weak();
+    let sup_ref = supervisor.clone();
+    let st_ref = state.clone();
     main_window.on_refresh_requested(move || {
-        if let Some(ui) = handle_refresh.upgrade() {
-            println!("UI Refresh requested (Ctrl+R)");
-            let handle = handle_refresh.clone();
-            let sup = sup_refresh.clone();
-            let st = state_refresh.clone();
+        let ui_h = ui_ref.clone();
+        let sup = sup_ref.clone();
+        let st = st_ref.clone();
+        std::thread::spawn(move || {
+            if let Some(client) = sup.get_client() {
+                sync_all_views(ui_h, &client, &st);
+            }
+        });
+    });
+
+    // Wire Callbacks: Build Row Clicked -> Fetch Real build.get_details
+    let ui_row = main_window.as_weak();
+    let sup_row = supervisor.clone();
+    let st_row = state.clone();
+    main_window.on_build_row_clicked(move |idx| {
+        let build_id = {
+            let s = st_row.lock().ok();
+            s.and_then(|st| {
+                let q = st.search_query.trim().to_lowercase();
+                st.builds
+                    .iter()
+                    .filter(|b| {
+                        q.is_empty()
+                            || b.build_id.to_lowercase().contains(&q)
+                            || b.repo.to_lowercase().contains(&q)
+                            || b.commit.to_lowercase().contains(&q)
+                    })
+                    .nth(idx as usize)
+                    .map(|b| b.build_id.clone())
+            })
+        };
+
+        if let Some(bid) = build_id {
+            let ui_h = ui_row.clone();
+            let sup = sup_row.clone();
             std::thread::spawn(move || {
                 if let Some(client) = sup.get_client() {
-                    let _ = client.send_request("system.ping", None, Duration::from_secs(2));
-                    sync_overview(handle.clone(), &client);
-                    sync_repositories(handle.clone(), &client, 0);
-                    sync_builds(handle.clone(), &client, st);
-                    sync_diagnostics(handle, &client);
+                    let params = serde_json::json!({ "build_id": bid });
+                    if let Ok(det) = client.send_request("build.get_details", Some(params), Duration::from_secs(5)) {
+                        let sha = det["primary_sha256"].as_str().unwrap_or("No SHA-256 artifact digest captured").to_string();
+                        let count = det["artifacts"].as_array().map(|a| a.len()).unwrap_or(0);
+                        let log_txt = det["log_text"].as_str().unwrap_or("").to_string();
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_h.upgrade() {
+                                ui.set_selected_hash(sha.into());
+                                ui.set_selected_artifact_count(format!("{} artifact(s)", count).into());
+                                ui.set_selected_build_log(log_txt.into());
+                            }
+                        });
+                    }
                 }
             });
-            let pid_str = sup_refresh
-                .get_engine_pid()
-                .map(|p| format!("Engine Connected (PID {})", p))
-                .unwrap_or_else(|| "Engine Synchronized".to_string());
-            ui.set_engine_status(pid_str.into());
         }
     });
 
-    // Repository Row Selection
-    let handle_repo = main_window.as_weak();
+    // Wire Callbacks: Repository & Revision Selection
+    let ui_repo = main_window.as_weak();
     let sup_repo = supervisor.clone();
-    main_window.on_repo_clicked(move |idx| {
-        if let Some(ui) = handle_repo.upgrade() {
-            ui.set_selected_repo_index(idx);
+    let st_repo = state.clone();
+    main_window.on_repo_selected(move |idx| {
+        let repo_id = {
+            let Ok(mut s) = st_repo.lock() else { return; };
+            s.selected_repo_idx = idx as usize;
+            let q = s.search_query.trim().to_lowercase();
+            s.repos
+                .iter()
+                .filter(|r| {
+                    q.is_empty()
+                        || r.name.to_lowercase().contains(&q)
+                        || r.github_slug.to_lowercase().contains(&q)
+                        || r.build_system.to_lowercase().contains(&q)
+                })
+                .nth(idx as usize)
+                .map(|r| r.id.clone())
+        };
+        if let Some(rid) = repo_id {
+            let ui_h = ui_repo.clone();
+            let sup = sup_repo.clone();
+            let st = st_repo.clone();
+            std::thread::spawn(move || {
+                if let Some(client) = sup.get_client() {
+                    sync_revisions_for_repo(ui_h, &client, &st, &rid);
+                }
+            });
         }
-        let handle = handle_repo.clone();
-        let sup = sup_repo.clone();
-        std::thread::spawn(move || {
-            if let Some(client) = sup.get_client() {
-                sync_repositories(handle, &client, idx as usize);
-            }
-        });
     });
 
-    // Register Local Repo Action Button
-    let handle_reg = main_window.as_weak();
-    let sup_reg = supervisor.clone();
-    main_window.on_register_local_repo_requested(move || {
-        println!("Register local repo requested");
-        let handle = handle_reg.clone();
-        let sup = sup_reg.clone();
-        std::thread::spawn(move || {
-            if let Some(client) = sup.get_client() {
-                let params = serde_json::json!({
-                    "name": "ReproForge",
-                    "repo_url": ".",
-                    "project_name": "ReproForge Capstone",
-                    "default_branch": "main",
-                    "repo_type": "local"
-                });
-                let _ = client.send_request("repository.register", Some(params), Duration::from_secs(5));
-                sync_repositories(handle.clone(), &client, 0);
-                sync_overview(handle, &client);
+    let ui_rev = main_window.as_weak();
+    let st_rev = state.clone();
+    main_window.on_revision_selected(move |idx| {
+        if let Some(ui) = ui_rev.upgrade() {
+            let revs = ui.get_revisions();
+            if let Some(rev) = revs.row_data(idx as usize) {
+                if let Ok(mut s) = st_rev.lock() {
+                    s.selected_revision_sha = rev.sha.to_string();
+                }
             }
-        });
+        }
     });
 
-    // Trigger Isolated Build Action
-    let handle_trig = main_window.as_weak();
+    // Wire Callbacks: Backend Isolation Selector
+    let st_backend = state.clone();
+    main_window.on_backend_type_selected(move |btype| {
+        if let Ok(mut s) = st_backend.lock() {
+            s.selected_backend_type = btype.to_string();
+        }
+    });
+
+    // Wire Callbacks: Trigger Verification Build (Uses Selected Repo + Backend)
+    let ui_trig = main_window.as_weak();
     let sup_trig = supervisor.clone();
-    let log_buf_trig = log_buffer.clone();
-    let active_bid_trig = active_build_id.clone();
+    let st_trig = state.clone();
     main_window.on_trigger_build_requested(move || {
-        println!("Trigger build requested");
-        if let Some(ui) = handle_trig.upgrade() {
-            ui.set_active_tab(2); // Switch to Builds view
-            ui.set_is_build_running(true);
-            ui.set_live_build_status("INITIALIZING".into());
-            ui.set_live_build_progress(0.1);
-            ui.set_live_build_message("Dispatching build execution to engine daemon...".into());
-            let initial_log = "[ReproForge Live Console]\n>>> Dispatching isolated build execution request to engine daemon...\n".to_string();
-            *log_buf_trig.lock().unwrap() = initial_log.clone();
-            ui.set_live_log_text(initial_log.into());
+        let (repo_id, commit_ref, backend) = {
+            let s = st_trig.lock().unwrap();
+            let rid = s.repos.get(s.selected_repo_idx).map(|r| r.id.clone());
+            let cref = if s.selected_revision_sha.is_empty() { "HEAD".into() } else { s.selected_revision_sha.clone() };
+            (rid, cref, s.selected_backend_type.clone())
+        };
+
+        if let Some(ui) = ui_trig.upgrade() {
+            ui.set_active_tab(2);
+            ui.set_active_build_count(1);
+            ui.set_selected_build_log(format!("Launching {} build at {}...", backend, commit_ref).into());
         }
+        if let Ok(mut s) = st_trig.lock() {
+            s.log_buffer.clear();
+        }
+
         let sup = sup_trig.clone();
-        let abid = active_bid_trig.clone();
+        let ui_h = ui_trig.clone();
         std::thread::spawn(move || {
             if let Some(client) = sup.get_client() {
-                let params = serde_json::json!({
-                    "backend_type": "local",
-                    "commit_ref": "HEAD"
+                let mut params = serde_json::json!({
+                    "backend_type": backend,
+                    "commit_ref": commit_ref,
                 });
-                if let Ok(resp) = client.send_request("build.trigger", Some(params), Duration::from_secs(120)) {
-                    if let Some(bid) = resp.get("build_id").and_then(|v| v.as_str()) {
-                        *abid.lock().unwrap() = Some(bid.to_string());
-                    }
+                if let Some(rid) = repo_id {
+                    params["repository_id"] = serde_json::Value::String(rid);
+                }
+                if let Err(e) = client.send_request("build.trigger", Some(params), Duration::from_secs(120)) {
+                    let msg = format!("Build error: {}", e);
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = ui_h.upgrade() {
+                            ui.set_active_build_count(0);
+                            ui.set_status_banner(msg.into());
+                        }
+                    });
                 }
             }
         });
     });
 
-    // Build Specific Revision Action
-    let handle_rev_build = main_window.as_weak();
-    let sup_rev_build = supervisor.clone();
-    let log_buf_rev = log_buffer.clone();
-    let active_bid_rev = active_build_id.clone();
-    main_window.on_build_revision_requested(move |sha| {
-        let sha_str = sha.to_string();
-        println!("Build revision requested for commit {}", sha_str);
-        if let Some(ui) = handle_rev_build.upgrade() {
-            ui.set_active_tab(2); // Switch to Builds view
-            ui.set_is_build_running(true);
-            ui.set_live_build_status("INITIALIZING".into());
-            ui.set_live_build_progress(0.1);
-            ui.set_live_build_message(format!("Dispatching build for commit {}...", sha_str).into());
-            let initial_log = format!("[ReproForge Live Console]\n>>> Dispatching build request for commit: {}...\n", sha_str);
-            *log_buf_rev.lock().unwrap() = initial_log.clone();
-            ui.set_live_log_text(initial_log.into());
+    let ui_rev_b = main_window.as_weak();
+    let sup_rev_b = supervisor.clone();
+    let st_rev_b = state.clone();
+    main_window.on_build_specific_revision_requested(move |sha| {
+        let (repo_id, backend) = {
+            let mut s = st_rev_b.lock().unwrap();
+            s.selected_revision_sha = sha.to_string();
+            s.log_buffer.clear();
+            let rid = s.repos.get(s.selected_repo_idx).map(|r| r.id.clone());
+            (rid, s.selected_backend_type.clone())
+        };
+        if let Some(ui) = ui_rev_b.upgrade() {
+            ui.set_active_build_count(1);
+            ui.set_selected_build_log(format!("Launching {} build for revision {}...", backend, sha).into());
         }
-        let sup = sup_rev_build.clone();
-        let abid = active_bid_rev.clone();
+        let sup = sup_rev_b.clone();
+        let ui_h = ui_rev_b.clone();
+        let cref = sha.to_string();
         std::thread::spawn(move || {
             if let Some(client) = sup.get_client() {
-                let params = serde_json::json!({
-                    "backend_type": "local",
-                    "commit_ref": sha_str
+                let mut params = serde_json::json!({
+                    "backend_type": backend,
+                    "commit_ref": cref,
                 });
-                if let Ok(resp) = client.send_request("build.trigger", Some(params), Duration::from_secs(120)) {
-                    if let Some(bid) = resp.get("build_id").and_then(|v| v.as_str()) {
-                        *abid.lock().unwrap() = Some(bid.to_string());
-                    }
+                if let Some(rid) = repo_id {
+                    params["repository_id"] = serde_json::Value::String(rid);
                 }
+                let _ = client.send_request("build.trigger", Some(params), Duration::from_secs(120));
+                let _ = ui_h;
             }
         });
     });
 
-    // Cancel Build Action
-    let handle_cancel = main_window.as_weak();
-    let sup_cancel = supervisor.clone();
-    let active_bid_cancel = active_build_id.clone();
+    // Wire Callbacks: Cancel Running Build
+    let ui_can = main_window.as_weak();
+    let sup_can = supervisor.clone();
     main_window.on_cancel_build_requested(move || {
-        println!("Cancel build requested");
-        if let Some(ui) = handle_cancel.upgrade() {
-            ui.set_live_build_message("Sending cancellation signal...".into());
-        }
-        let sup = sup_cancel.clone();
-        let abid = active_bid_cancel.clone();
+        let sup = sup_can.clone();
+        let ui_h = ui_can.clone();
         std::thread::spawn(move || {
             if let Some(client) = sup.get_client() {
-                let bid = abid.lock().unwrap().clone();
-                let params = if let Some(id) = bid {
-                    serde_json::json!({ "build_id": id })
-                } else {
-                    serde_json::json!({ "build_id": "" })
-                };
-                let _ = client.send_request("build.cancel", Some(params), Duration::from_secs(5));
+                let _ = client.send_request("build.cancel", Some(serde_json::json!({})), Duration::from_secs(5));
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = ui_h.upgrade() {
+                        ui.set_active_build_count(0);
+                        ui.set_status_banner("Sent cancellation signal to active build process.".into());
+                    }
+                });
             }
         });
     });
 
-    // 8. First-Frame Presentation Notifier Hook (for benchmarking & launch readiness)
+    // Wire Callbacks: Native OS Folder Picker + GitHub Autoscan + Workspace Checklist
+    let ui_browse = main_window.as_weak();
+    let sup_browse = supervisor.clone();
+    let st_browse = state.clone();
+    main_window.on_browse_folder_requested(move || {
+        let ui_h = ui_browse.clone();
+        let sup = sup_browse.clone();
+        let st = st_browse.clone();
+        let fetch_online = ui_browse
+            .upgrade()
+            .map(|u| u.get_fetch_online_github())
+            .unwrap_or(true);
+        std::thread::spawn(move || {
+            if let Some(folder) = rfd::FileDialog::new().set_title("Select Local Git Repository or Parent Workspace").pick_folder() {
+                let path_str = folder.to_string_lossy().to_string();
+                let ui_set = ui_h.clone();
+                let p_clone = path_str.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = ui_set.upgrade() {
+                        ui.set_repo_input_path(p_clone.into());
+                    }
+                });
+                run_scan_folder_ipc(ui_h, sup, st, path_str, fetch_online);
+            }
+        });
+    });
+
+    let ui_scan = main_window.as_weak();
+    let sup_scan = supervisor.clone();
+    let st_scan = state.clone();
+    main_window.on_scan_folder_requested(move |path_arg| {
+        let fetch_online = ui_scan
+            .upgrade()
+            .map(|u| u.get_fetch_online_github())
+            .unwrap_or(true);
+        run_scan_folder_ipc(
+            ui_scan.clone(),
+            sup_scan.clone(),
+            st_scan.clone(),
+            path_arg.to_string(),
+            fetch_online,
+        );
+    });
+
+    let ui_reg_fallback = main_window.as_weak();
+    let sup_reg_fallback = supervisor.clone();
+    let st_reg_fallback = state.clone();
+    main_window.on_register_local_repo_requested(move || {
+        let p = ui_reg_fallback
+            .upgrade()
+            .map(|u| u.get_repo_input_path().to_string())
+            .unwrap_or_default();
+        if !p.trim().is_empty() {
+            run_scan_folder_ipc(ui_reg_fallback.clone(), sup_reg_fallback.clone(), st_reg_fallback.clone(), p, true);
+        }
+    });
+
+    let ui_auto = main_window.as_weak();
+    let sup_auto = supervisor.clone();
+    let st_auto = state.clone();
+    main_window.on_autoscan_repo_requested(move || {
+        let repo_id = {
+            let s = st_auto.lock().unwrap();
+            s.repos.get(s.selected_repo_idx).map(|r| r.id.clone())
+        };
+        let fetch_online = ui_auto
+            .upgrade()
+            .map(|u| u.get_fetch_online_github())
+            .unwrap_or(true);
+        if let Some(rid) = repo_id {
+            let sup = sup_auto.clone();
+            let ui_h = ui_auto.clone();
+            let st = st_auto.clone();
+            std::thread::spawn(move || {
+                if let Some(client) = sup.get_client() {
+                    let params = serde_json::json!({
+                        "repository_id": rid,
+                        "fetch_online_metadata": fetch_online,
+                    });
+                    if let Ok(res) = client.send_request("repository.autoscan", Some(params), Duration::from_secs(20)) {
+                        let slug = res["github_slug"].as_str().unwrap_or("none").to_string();
+                        let sel = st.lock().map(|s| s.selected_repo_idx).unwrap_or(0);
+                        sync_repositories(ui_h.clone(), &client, st, sel);
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_h.upgrade() {
+                                ui.set_status_banner(format!("Completed static GitHub autoscan (remote: {}).", slug).into());
+                            }
+                        });
+                    }
+                }
+            });
+        }
+    });
+
+    // Checklist Modal Handlers
+    let ui_chk_toggle = main_window.as_weak();
+    let st_chk_toggle = state.clone();
+    main_window.on_checklist_item_toggled(move |idx| {
+        if let Ok(mut s) = st_chk_toggle.lock() {
+            if let Some(item) = s.candidates.get_mut(idx as usize) {
+                item.checked = !item.checked;
+            }
+            if let Some(ui) = ui_chk_toggle.upgrade() {
+                push_candidates_to_ui(&ui, &s);
+            }
+        }
+    });
+
+    let ui_chk_all = main_window.as_weak();
+    let st_chk_all = state.clone();
+    main_window.on_checklist_select_all_untracked(move || {
+        if let Ok(mut s) = st_chk_all.lock() {
+            for item in &mut s.candidates {
+                item.checked = !item.already_tracked;
+            }
+            if let Some(ui) = ui_chk_all.upgrade() {
+                push_candidates_to_ui(&ui, &s);
+            }
+        }
+    });
+
+    let ui_chk_dismiss = main_window.as_weak();
+    main_window.on_dismiss_workspace_checklist(move || {
+        if let Some(ui) = ui_chk_dismiss.upgrade() {
+            ui.set_show_workspace_checklist(false);
+        }
+    });
+
+    let ui_chk_confirm = main_window.as_weak();
+    let sup_chk_confirm = supervisor.clone();
+    let st_chk_confirm = state.clone();
+    main_window.on_confirm_workspace_checklist(move || {
+        let items: Vec<serde_json::Value> = {
+            let s = st_chk_confirm.lock().unwrap();
+            s.candidates
+                .iter()
+                .filter(|c| c.checked)
+                .map(|c| {
+                    serde_json::json!({
+                        "name": c.name,
+                        "repo_path": c.repo_path,
+                        "default_branch": c.default_branch,
+                    })
+                })
+                .collect()
+        };
+        let fetch_online = ui_chk_confirm
+            .upgrade()
+            .map(|u| u.get_fetch_online_github())
+            .unwrap_or(true);
+        if let Some(ui) = ui_chk_confirm.upgrade() {
+            ui.set_show_workspace_checklist(false);
+            ui.set_status_banner(format!("Tracking & scanning {} selected repository(s)...", items.len()).into());
+        }
+        if items.is_empty() {
+            return;
+        }
+        let sup = sup_chk_confirm.clone();
+        let ui_h = ui_chk_confirm.clone();
+        let st = st_chk_confirm.clone();
+        std::thread::spawn(move || {
+            if let Some(client) = sup.get_client() {
+                let params = serde_json::json!({
+                    "items": items,
+                    "fetch_online_metadata": fetch_online,
+                });
+                if let Ok(res) = client.send_request("repository.register_batch", Some(params), Duration::from_secs(45)) {
+                    let count = res["count"].as_u64().unwrap_or(0);
+                    sync_repositories(ui_h.clone(), &client, st, 0);
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = ui_h.upgrade() {
+                            ui.set_status_banner(format!("Tracked & completed static GitHub autoscan for {} repository(s).", count).into());
+                        }
+                    });
+                }
+            }
+        });
+    });
+
+    // Wire Callbacks: Diff Entry Selection
+    let ui_diff = main_window.as_weak();
+    let st_diff = state.clone();
+    main_window.on_diff_entry_selected(move |idx| {
+        if let Ok(s) = st_diff.lock() {
+            if let Some(entry) = s.diffs.get(idx as usize) {
+                if let Some(ui) = ui_diff.upgrade() {
+                    let snippet = if entry.snippet.is_empty() {
+                        format!("{} ({}) — {}", entry.path, entry.diff_type, entry.size_delta)
+                    } else {
+                        entry.snippet.to_string()
+                    };
+                    ui.set_selected_diff_snippet(snippet.into());
+                }
+            }
+        }
+    });
+
+    // Wire Callbacks: Causality Graph Refresh & Export DOT
+    let ui_graph = main_window.as_weak();
+    let sup_graph = supervisor.clone();
+    let st_graph = state.clone();
+    main_window.on_refresh_graph_requested(move || {
+        let ui_h = ui_graph.clone();
+        let sup = sup_graph.clone();
+        let st = st_graph.clone();
+        std::thread::spawn(move || {
+            if let Some(client) = sup.get_client() {
+                sync_causality_graph(ui_h, &client, st);
+            }
+        });
+    });
+
+    let ui_dot = main_window.as_weak();
+    let sup_dot = supervisor.clone();
+    main_window.on_export_dot_requested(move || {
+        let ui_h = ui_dot.clone();
+        let sup = sup_dot.clone();
+        std::thread::spawn(move || {
+            if let Some(client) = sup.get_client() {
+                if let Ok(val) = client.send_request("causality.get_graph", None, Duration::from_secs(5)) {
+                    let dot = val["dot_source"].as_str().unwrap_or("digraph ReproForgeCausality {}\n");
+                    let out_path = find_repo_root()
+                        .unwrap_or_else(|| std::path::PathBuf::from("."))
+                        .join("data")
+                        .join("causality_graph.dot");
+                    let msg = match std::fs::write(&out_path, dot) {
+                        Ok(_) => format!("Exported Graphviz DAG to {}", out_path.display()),
+                        Err(e) => format!("Failed exporting DOT: {}", e),
+                    };
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = ui_h.upgrade() {
+                            ui.set_status_banner(msg.into());
+                        }
+                    });
+                }
+            }
+        });
+    });
+
+    // Milestone G Placeholders (wired fully in Phase 3)
+    let ui_mg = main_window.as_weak();
+    main_window.on_run_perturbation_campaign_requested(move || {
+        if let Some(ui) = ui_mg.upgrade() {
+            ui.set_status_banner("Perturbation runner ready (Phase 3 endpoint integration pending).".into());
+        }
+    });
+    let ui_mg2 = main_window.as_weak();
+    main_window.on_export_passport_json_requested(move || {
+        if let Some(ui) = ui_mg2.upgrade() {
+            ui.set_status_banner("Passport exporter ready (Phase 3 endpoint integration pending).".into());
+        }
+    });
+    let ui_mg3 = main_window.as_weak();
+    main_window.on_export_passport_md_requested(move || {
+        if let Some(ui) = ui_mg3.upgrade() {
+            ui.set_status_banner("Markdown passport exporter ready (Phase 3 endpoint integration pending).".into());
+        }
+    });
+
+    // First-Frame Presentation Notifier Hook (benchmark harness compatibility)
     let first_frame = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let ff_clone = first_frame.clone();
     let notifier_res = main_window.window().set_rendering_notifier(move |rendering_state, _api| {
@@ -757,8 +1331,7 @@ fn main() -> Result<(), slint::PlatformError> {
     });
 
     if notifier_res.is_err() {
-        // Fallback for software renderer where set_rendering_notifier is not supported
-        slint::Timer::single_shot(std::time::Duration::from_millis(16), move || {
+        slint::Timer::single_shot(Duration::from_millis(16), move || {
             use std::io::Write;
             println!("FIRST_FRAME_PRESENTED");
             std::io::stdout().flush().ok();

@@ -1,246 +1,158 @@
+import { ListView } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
+import { ActionButton } from "../components/action_button.slint";
+import { PanelCard } from "../components/panel_card.slint";
 import { StatusBadge } from "../components/status_badge.slint";
+import { IconLab } from "../components/icons.slint";
 
 export struct PerturbationParam {
     name: string,
-    baseline_value: string,
-    perturbed_value: string,
-    status: string, // "INVARIANT", "SENSITIVE", "PENDING"
+    baseline_val: string,
+    perturbed_val: string,
+    description: string,
+    enabled: bool,
 }
 
 export struct SensitivityResult {
-    variable: string,
-    tested_value: string,
-    hash_drift_detected: bool,
-    epistemic_impact: string, // "EXPERIMENTALLY_VALIDATED", "DISPROVED"
+    param_name: string,
+    baseline_verdict: string,
+    perturbed_verdict: string,
+    hash_changed: bool,
+    causal_impact: string,
+    epistemic_status: string,
 }
 
 export component PerturbationView inherits Rectangle {
-    in property <[PerturbationParam]> parameters: [];
+    in property <[PerturbationParam]> params: [];
     in property <[SensitivityResult]> results: [];
     in property <bool> is_running: false;
-    in property <string> campaign_summary: "Ready to execute single-variable perturbation matrix.";
+
     callback run_campaign_requested();
 
-    background: Theme.bg_primary;
+    background: Theme.bg-canvas;
 
     VerticalLayout {
         padding: 20px;
-        spacing: 16px;
+        spacing: 14px;
 
-        // Header
-        HorizontalLayout {
-            alignment: space-between;
-            VerticalLayout {
-                spacing: 4px;
-                HorizontalLayout {
-                    spacing: 10px;
-                    Text {
-                        text: "Controlled Perturbation & Sensitivity Analysis Lab";
-                        font-size: 18px;
-                        font-weight: 700;
-                        color: Theme.text_primary;
-                        vertical-alignment: center;
-                    }
-                    Rectangle {
-                        height: 20px;
-                        border-radius: Theme.radius_sm;
-                        background: Theme.status_inconclusive_bg;
-                        border-width: 1px;
-                        border-color: Theme.status_inconclusive_border;
-                        HorizontalLayout {
-                            padding-left: 8px; padding-right: 8px; alignment: center;
-                            Text {
-                                text: "Single-Variable Intervention";
-                                font-size: 10px;
-                                font-weight: 600;
-                                color: Theme.status_inconclusive;
-                                vertical-alignment: center;
-                            }
-                        }
-                    }
-                }
-                Text {
-                    text: "Isolates root causes by systematically perturbing individual environmental dimensions under ceteris paribus conditions.";
-                    font-size: 12px;
-                    color: Theme.text_dim;
-                }
-            }
-
-            Rectangle {
-                width: 190px;
-                height: 36px;
-                background: Theme.accent_blue;
-                border-radius: Theme.radius_md;
-                run_touch := TouchArea {
-                    clicked => { root.run_campaign_requested(); }
-                }
-                HorizontalLayout {
-                    alignment: center;
-                    spacing: 6px;
-                    Text {
-                        text: root.is_running ? "⏳ Running Campaign..." : "▶ Run Perturbation Test";
-                        font-size: 12px;
-                        font-weight: 600;
-                        color: Theme.text_primary;
-                        vertical-alignment: center;
-                    }
-                }
-            }
-        }
-
-        // Campaign Summary Bar
-        Rectangle {
-            height: 44px;
-            background: Theme.bg_secondary;
-            border-radius: Theme.radius_md;
-            border-width: 1px;
-            border-color: Theme.border_subtle;
-            padding-left: 14px;
-            padding-right: 14px;
-
+        PanelCard {
+            inner-padding: 12px;
             HorizontalLayout {
                 alignment: space-between;
-                Text {
-                    text: root.campaign_summary;
-                    font-size: 12px;
-                    font-weight: 500;
-                    color: Theme.text_secondary;
-                    vertical-alignment: center;
+                spacing: 12px;
+                VerticalLayout {
+                    spacing: 2px;
+                    Text {
+                        text: "Single-Variable Perturbation & Sensitivity Lab";
+                        color: Theme.text-primary;
+                        font-size: 14px;
+                        font-weight: 700;
+                    }
+                    Text {
+                        text: "Isolate causal variables across clean exported git commits with confounder guard";
+                        color: Theme.text-secondary;
+                        font-size: 11.5px;
+                    }
                 }
-                StatusBadge {
-                    text: root.is_running ? "RUNNING" : "READY";
-                    variant: root.is_running ? "warn" : "exact";
+                ActionButton {
+                    label: root.is_running ? "Campaign Running..." : "Run Sensitivity Campaign";
+                    variant: "primary";
+                    btn-height: 32px;
+                    disabled: root.is_running;
+                    clicked => { root.run_campaign_requested(); }
+                    IconLab { icon-size: 13px; icon-color: #FFFFFF; }
                 }
             }
         }
 
-        // Split Panel: Parameters Matrix & Results
         HorizontalLayout {
+            vertical-stretch: 1;
             spacing: 16px;
 
-            // Left: Controlled Variables
-            Rectangle {
-                horizontal-stretch: 3;
-                background: Theme.bg_secondary;
-                border-radius: Theme.radius_md;
-                border-width: 1px;
-                border-color: Theme.border_subtle;
+            PanelCard {
+                horizontal-stretch: 2;
+                title: "Experimental Variable Matrix (" + root.params.length + ")";
+                subtitle: "Controlled single-variable deltas (SOURCE_DATE_EPOCH, TZ, LC_ALL, umask)";
 
-                VerticalLayout {
-                    padding: 14px;
-                    spacing: 10px;
-
-                    Text { text: "Controlled Environmental Variable Space"; font-size: 13px; font-weight: 600; color: Theme.text_primary; }
-
-                    // Table Header
-                    Rectangle {
-                        height: 28px;
-                        background: Theme.bg_elevated;
-                        border-radius: Theme.radius_sm;
-                        HorizontalLayout {
-                            padding-left: 10px; padding-right: 10px;
-                            Text { width: 160px; text: "VARIABLE"; font-size: 11px; font-weight: 600; color: Theme.text_muted; vertical-alignment: center; }
-                            Text { width: 140px; text: "BASELINE VALUE"; font-size: 11px; font-weight: 600; color: Theme.text_muted; vertical-alignment: center; }
-                            Text { horizontal-stretch: 1; text: "PERTURBED DELTA"; font-size: 11px; font-weight: 600; color: Theme.text_muted; vertical-alignment: center; }
-                            Text { width: 90px; text: "STATUS"; font-size: 11px; font-weight: 600; color: Theme.text_muted; vertical-alignment: center; }
-                        }
+                if root.params.length == 0: Rectangle {
+                    vertical-stretch: 1;
+                    Text {
+                        text: "Load campaign parameters from backend.";
+                        color: Theme.text-muted;
+                        font-size: 12px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
                     }
+                }
 
-                    Flickable {
-                        height: 420px;
-                        content-height: (root.parameters.length * 44px) + 20px;
+                if root.params.length > 0: ListView {
+                    vertical-stretch: 1;
+                    for p in root.params: Rectangle {
+                        height: 66px;
+                        background: Theme.bg-elevated;
+                        border-radius: Theme.radius-sm;
+                        border-width: 1px;
+                        border-color: Theme.border-subtle;
 
                         VerticalLayout {
-                            spacing: 6px;
-                            for p in root.parameters : Rectangle {
-                                height: 38px;
-                                background: Theme.bg_card;
-                                border-radius: Theme.radius_sm;
-                                border-width: 1px;
-                                border-color: Theme.border_subtle;
-
-                                HorizontalLayout {
-                                    padding-left: 10px; padding-right: 10px;
-                                    Text { width: 160px; text: p.name; font-size: 12px; font-weight: 600; color: Theme.accent_cyan; vertical-alignment: center; }
-                                    Text { width: 140px; text: p.baseline_value; font-size: 11px; color: Theme.text_dim; vertical-alignment: center; }
-                                    Text { horizontal-stretch: 1; text: p.perturbed_value; font-size: 11px; color: Theme.text_secondary; vertical-alignment: center; }
-                                    HorizontalLayout {
-                                        width: 90px;
-                                        alignment: start;
-                                        StatusBadge {
-                                            text: p.status;
-                                            variant: (p.status == "INVARIANT") ? "exact" :
-                                                     (p.status == "SENSITIVE") ? "warn" : "norm";
-                                        }
-                                    }
-                                }
+                            padding: 10px;
+                            spacing: 4px;
+                            HorizontalLayout {
+                                alignment: space-between;
+                                Text { text: p.name; color: Theme.accent-cyan; font-size: 12px; font-weight: 700; }
+                                StatusBadge { text: p.enabled ? "ACTIVE" : "DISABLED"; kind: p.enabled ? "info" : "neutral"; }
+                            }
+                            Text {
+                                text: p.baseline_val + "  ->  " + p.perturbed_val + "  •  " + p.description;
+                                color: Theme.text-secondary;
+                                font-size: 11px;
+                                overflow: elide;
                             }
                         }
                     }
                 }
             }
 
-            // Right: Sensitivity Findings
-            Rectangle {
-                horizontal-stretch: 2;
-                background: Theme.bg_secondary;
-                border-radius: Theme.radius_md;
-                border-width: 1px;
-                border-color: Theme.border_subtle;
+            PanelCard {
+                horizontal-stretch: 3;
+                title: "Sensitivity Response Results (" + root.results.length + ")";
+                subtitle: "Hash drift verification promoting HYPOTHESIS -> EXPERIMENTALLY_VALIDATED";
 
-                VerticalLayout {
-                    padding: 14px;
-                    spacing: 12px;
-
-                    Text { text: "Empirical Sensitivity Results"; font-size: 13px; font-weight: 600; color: Theme.text_primary; }
-
-                    Flickable {
-                        height: 340px;
-                        content-height: (root.results.length * 70px) + 20px;
-
-                        VerticalLayout {
-                            spacing: 8px;
-                            for res in root.results : Rectangle {
-                                height: 62px;
-                                background: Theme.bg_card;
-                                border-radius: Theme.radius_sm;
-                                border-width: 1px;
-                                border-color: res.hash_drift_detected ? Theme.status_warn_border : Theme.status_exact_border;
-                                padding: 8px;
-
-                                VerticalLayout {
-                                    spacing: 4px;
-                                    HorizontalLayout {
-                                        alignment: space-between;
-                                        Text { text: res.variable; font-size: 12px; font-weight: 700; color: Theme.text_primary; }
-                                        StatusBadge {
-                                            text: res.hash_drift_detected ? "HASH DRIFT" : "BIT-IDENTICAL";
-                                            variant: res.hash_drift_detected ? "warn" : "exact";
-                                        }
-                                    }
-                                    Text {
-                                        text: "Value: " + res.tested_value + " ➔ Status: " + res.epistemic_impact;
-                                        font-size: 10px;
-                                        color: Theme.status_inconclusive;
-                                        overflow: elide;
-                                    }
-                                }
-                            }
-                        }
+                if root.results.length == 0: Rectangle {
+                    vertical-stretch: 1;
+                    Text {
+                        text: "Click 'Run Sensitivity Campaign' to test how environment perturbations affect the active repository's build artifacts.";
+                        color: Theme.text-muted;
+                        font-size: 12px;
+                        wrap: word-wrap;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
                     }
+                }
 
-                    Rectangle {
-                        background: Theme.bg_elevated;
-                        border-radius: Theme.radius_sm;
-                        padding: 10px;
+                if root.results.length > 0: ListView {
+                    vertical-stretch: 1;
+                    for r in root.results: Rectangle {
+                        height: 68px;
+                        background: Theme.bg-elevated;
+                        border-radius: Theme.radius-sm;
+                        border-width: 1px;
+                        border-color: Theme.border-subtle;
+
                         VerticalLayout {
+                            padding: 10px;
                             spacing: 4px;
-                            Text { text: "Intervention Epistemology Rule:"; font-size: 10px; font-weight: 700; color: Theme.accent_cyan; }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                Text { text: r.param_name; color: Theme.text-primary; font-size: 12px; font-weight: 700; horizontal-stretch: 1; }
+                                StatusBadge { text: r.hash_changed ? "DRIFT TRIGGERED" : "INVARIANT"; kind: r.hash_changed ? "warning" : "success"; }
+                                StatusBadge { text: r.epistemic_status; kind: r.epistemic_status == "EXPERIMENTALLY_VALIDATED" ? "success" : "info"; }
+                            }
                             Text {
-                                text: "Only when a single-variable intervention flips the artifact hash from divergent to bit-identical can the diagnostic edge be promoted to EXPERIMENTALLY_VALIDATED.";
-                                font-size: 10px;
-                                color: Theme.text_dim;
+                                text: "Impact: " + r.causal_impact + "  (" + r.baseline_verdict + " -> " + r.perturbed_verdict + ")";
+                                color: Theme.text-secondary;
+                                font-size: 11px;
+                                overflow: elide;
                             }
                         }
                     }

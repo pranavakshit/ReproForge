@@ -1,322 +1,402 @@
-import { Theme } from "theme.slint";
-import { AppHeader } from "components/app_header.slint";
-import { Sidebar } from "components/sidebar.slint";
-import { AboutModal } from "components/about_modal.slint";
-import { OverviewView, RecentBuildItem } from "views/overview.slint";
-import { RepositoriesView, RepoItem, RevisionItem } from "views/repos.slint";
-import { BuildsView, BuildRowData } from "views/builds.slint";
-import { DiagnosticsView, DiffEntry, DiagnosticFindingItem } from "views/diagnostics.slint";
-import { CausalityGraphView, GraphNodeItem, GraphEdgeItem } from "views/causality_graph.slint";
-import { PerturbationView, PerturbationParam, SensitivityResult } from "views/perturbation.slint";
-import { PassportView } from "views/passport.slint";
-import { RemediationView, RemediationProposal } from "views/remediation.slint";
-import { SettingsView } from "views/settings.slint";
+import { Theme } from "./theme.slint";
+import { Sidebar } from "./components/sidebar.slint";
+import { AppHeader } from "./components/app_header.slint";
+import { AboutModal } from "./components/about_modal.slint";
+import {
+    OverviewView, RecentBuildItem
+} from "./views/overview.slint";
+import {
+    ReposView, RepoItem, RevisionItem, WorkspaceCandidateItem
+} from "./views/repos.slint";
+import {
+    BuildsView, BuildRowData
+} from "./views/builds.slint";
+import {
+    DiagnosticsView, DiffEntry, DiagnosticFindingItem
+} from "./views/diagnostics.slint";
+import {
+    CausalityGraphView, GraphNodeItem, GraphEdgeItem
+} from "./views/causality_graph.slint";
+import {
+    PerturbationView, PerturbationParam, SensitivityResult
+} from "./views/perturbation.slint";
+import { PassportView } from "./views/passport.slint";
+import {
+    RemediationView, RemediationProposal
+} from "./views/remediation.slint";
+import { SettingsView } from "./views/settings.slint";
 
 export {
-    BuildRowData,
-    RepoItem,
-    RevisionItem,
-    RecentBuildItem,
-    DiffEntry,
-    DiagnosticFindingItem,
-    GraphNodeItem,
-    GraphEdgeItem,
-    PerturbationParam,
-    SensitivityResult,
-    RemediationProposal,
+    BuildRowData, RepoItem, RevisionItem, RecentBuildItem, WorkspaceCandidateItem,
+    DiffEntry, DiagnosticFindingItem,
+    GraphNodeItem, GraphEdgeItem,
+    PerturbationParam, SensitivityResult,
+    RemediationProposal
 }
 
 export component MainWindow inherits Window {
-    title: "ReproForge — Build Reproducibility Framework";
-    preferred-width: 1220px;
-    preferred-height: 780px;
-    min-width: 1020px;
+    title: "ReproForge — Software Build Reproducibility & Diagnostic Studio";
+    preferred-width: 1280px;
+    preferred-height: 820px;
+    min-width: 980px;
     min-height: 660px;
-    background: Theme.bg_primary;
+    background: Theme.bg-canvas;
 
-    // View Routing State (0: Overview, 1: Repos, 2: Builds, 3: Diagnostics, 4: Causality, 5: Perturbation, 6: Passport, 7: Remediation, 8: Settings)
+    // Navigation & Shell State
     in-out property <int> active_tab: 0;
+    in-out property <bool> show_about: false;
+    in-out property <string> app_version: "0.2.0";
+    in-out property <string> engine_status: "Engine Initializing...";
+    in-out property <bool> engine_healthy: false;
+    in-out property <string> engine_backend: "IPC";
+    in-out property <string> search_query: "";
+    in-out property <string> status_banner: "";
 
-    // Global Telemetry State
-    in property <string> engine_status: "Engine Connected (PID 4820)";
-    in property <string> active_backend: "Hardware (Skia/Femtovg)";
-    in property <bool> is_software_renderer: false;
-    in-out property <bool> motion_enabled: true;
-    in property <bool> is_loading: false;
-    in property <float> shimmer_pos: 0.5;
-    in-out property <bool> is_about_open: false;
+    // Overview Metrics & Telemetry
+    in-out property <string> total_builds: "0";
+    in-out property <string> total_comparisons: "0";
+    in-out property <string> bit_for_bit_rate: "0.0%";
+    in-out property <string> normalized_rate: "0.0%";
+    in-out property <string> unresolved_count: "0";
+    in-out property <float> cri_bit_ratio: 0.0;
+    in-out property <float> cri_norm_ratio: 0.0;
+    in-out property <float> cri_drift_ratio: 0.0;
+    in-out property <string> host_os: "Detecting...";
+    in-out property <string> host_arch: "—";
+    in-out property <string> detected_toolchains: "Probing local environment...";
+    in-out property <string> docker_cli_version: "Probing...";
+    in-out property <string> database_path: "data/reproforge.db";
+    in-out property <[RecentBuildItem]> recent_builds: [];
 
-    // Overview Properties
-    in property <string> total_builds: "0";
-    in property <string> bit_for_bit_rate: "0.0%";
-    in property <string> normalized_rate: "0.0%";
-    in property <string> unresolved_count: "0";
-    in property <[RecentBuildItem]> recent_builds: [];
-    in property <string> overview_telemetry_badge: "Live Database & Engine";
-    in property <string> overview_host_os: "Windows 11 (x86_64)";
-    in property <string> overview_host_cpu: "Python 3.14.7 (.venv verified)";
-    in property <string> overview_host_storage: "SQLite 3 WAL (reproforge.db)";
+    // Repositories & GitHub Autoscan
+    in-out property <[RepoItem]> repos: [];
+    in-out property <int> selected_repo_idx: 0;
+    in-out property <[RevisionItem]> revisions: [];
+    in-out property <int> selected_revision_idx: 0;
+    in-out property <string> repo_input_path: "";
+    in-out property <bool> fetch_online_github: true;
+    in-out property <[WorkspaceCandidateItem]> workspace_candidates: [];
+    in-out property <bool> show_workspace_checklist: false;
+    in-out property <string> workspace_folder_path: "";
+    in-out property <string> workspace_checklist_status: "";
 
-    // Repositories Properties
-    in property <[RepoItem]> repositories: [];
-    in property <int> selected_repo_index: 0;
-    in property <[RevisionItem]> revisions: [];
+    // Builds & Logs
+    in-out property <[BuildRowData]> builds: [];
+    in-out property <int> selected_build_idx: 0;
+    in-out property <string> selected_build_log: "";
+    in-out property <string> selected_hash: "Select a build to inspect primary SHA-256";
+    in-out property <string> selected_artifact_count: "0 artifacts";
+    in-out property <string> selected_backend_type: "local";
+    in-out property <int> active_build_count: 0;
 
-    // Builds Properties
-    in property <[BuildRowData]> build_rows: [];
-    in property <int> builds_total_count: 0;
-    in property <int> builds_filtered_count: 0;
-    in property <string> selected_build_id: "";
-    in property <string> selected_commit_sha: "";
-    in property <string> selected_backend: "";
-    in property <string> selected_verdict: "";
-    in property <string> selected_hash: "";
+    // Diff & Diagnostics (Milestone F)
+    in-out property <string> diag_target_a: "Awaiting comparison...";
+    in-out property <string> diag_target_b: "Awaiting comparison...";
+    in-out property <string> diag_verdict: "UNCOMPARED";
+    in-out property <float> cri_content: 0.0;
+    in-out property <float> cri_metadata: 0.0;
+    in-out property <float> cri_environment: 0.0;
+    in-out property <[DiffEntry]> diff_entries: [];
+    in-out property <int> diff_selected_idx: -1;
+    in-out property <string> selected_diff_snippet: "";
+    in-out property <[DiagnosticFindingItem]> diagnostic_findings: [];
 
-    in property <string> live_build_status: "IDLE";
-    in property <float> live_build_progress: 0.0;
-    in property <string> live_build_message: "Ready to execute isolated reproducible build";
-    in property <string> live_log_text: "[ReproForge Live Console]\nSelect a build to inspect logs or click '▶ Trigger Isolated Build' to run a live reproducible build.";
-    in property <bool> is_build_running: false;
+    // Causality Graph (Milestone F)
+    in-out property <[GraphNodeItem]> graph_nodes: [];
+    in-out property <[GraphEdgeItem]> graph_edges: [];
+    in-out property <int> selected_graph_node_idx: -1;
 
-    // Diagnostics Properties
-    in property <string> diag_target_a: "Build A (Windows 11 AMD64)";
-    in property <string> diag_target_b: "Build B (Windows 11 AMD64)";
-    in property <string> diag_verdict: "normalized_reproducible";
-    in property <string> diag_cri: "0.88";
-    in property <string> diag_content_ratio: "1.00";
-    in property <string> diag_metadata_ratio: "0.75";
-    in property <[DiffEntry]> diff_entries: [];
-    in property <[DiagnosticFindingItem]> diagnostic_findings: [];
+    // Perturbation Lab (Milestone G)
+    in-out property <[PerturbationParam]> perturbation_params: [];
+    in-out property <[SensitivityResult]> sensitivity_results: [];
+    in-out property <bool> perturbation_running: false;
 
-    // Causality Graph Properties
-    in property <[GraphNodeItem]> graph_nodes: [];
-    in property <[GraphEdgeItem]> graph_edges: [];
-    in-out property <int> selected_graph_node: 0;
-    in property <string> dot_source: "";
+    // Passport & Audit (Milestone G)
+    in-out property <string> passport_json: "";
+    in-out property <string> passport_repo: "";
+    in-out property <string> passport_status: "UNVERIFIED";
 
-    // Perturbation Properties
-    in property <[PerturbationParam]> perturbation_params: [];
-    in property <[SensitivityResult]> perturbation_results: [];
-    in property <bool> is_perturbation_running: false;
-    in property <string> perturbation_summary: "Ready to execute single-variable perturbation matrix.";
+    // Self-Healing & Remediation (Milestone G)
+    in-out property <[RemediationProposal]> remediation_proposals: [];
+    in-out property <int> selected_proposal_idx: -1;
 
-    // Passport Properties
-    in property <string> passport_id: "rf-pass-9a8f2c";
-    in property <string> passport_artifact_name: "reproforge-core-0.1.0-py3-none-any.whl";
-    in property <string> passport_sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
-    in property <string> passport_schema_version: "reproforge-passport-v1.0.json";
-    in property <string> passport_timestamp: "2026-11-23T12:00:00Z";
-    in property <string> passport_host_kernel: "Windows 11 AMD64 (NT 10.0.26100)";
-    in property <string> passport_toolchain_digest: "python=3.14.7,wheel=0.45.1,flit_core=3.11.0";
-    in property <string> passport_verification_status: "VERIFIED_BIT_FOR_BIT";
-    in property <string> passport_json: "";
+    // Settings & Storage
+    in-out property <string> storage_db_path: "data/reproforge.db";
+    in-out property <string> storage_artifacts_path: "collected_artifacts";
+    in-out property <string> storage_workspaces_path: "build_workspaces";
+    in-out property <bool> docker_available: false;
 
-    // Remediation Properties
-    in property <[RemediationProposal]> remediation_proposals: [];
-    in-out property <int> selected_remediation_proposal: 0;
-    in property <string> remediation_verification_status: "Awaiting remediation action";
-    in property <bool> is_remediation_verifying: false;
-
-    // Callbacks to Native Rust Host
+    // Application Callbacks
     callback refresh_requested();
-    callback search_query_changed(string);
-    callback verdict_filter_changed(int);
+    callback search_changed(string);
     callback build_row_clicked(int);
-    callback repo_clicked(int);
-    callback register_local_repo_requested();
-    callback build_revision_requested(string);
+    callback repo_selected(int);
+    callback revision_selected(int);
     callback trigger_build_requested();
+    callback build_specific_revision_requested(string);
     callback cancel_build_requested();
+    callback backend_type_selected(string);
 
-    // Causality Callbacks
+    // GitHub Autoscan & Folder Checklist Callbacks
+    callback register_local_repo_requested();
+    callback browse_folder_requested();
+    callback scan_folder_requested(string);
+    callback autoscan_repo_requested();
+    callback checklist_item_toggled(int);
+    callback checklist_select_all_untracked();
+    callback confirm_workspace_checklist();
+    callback dismiss_workspace_checklist();
+
+    // Diagnostics & Causality Graph Callbacks
+    callback diff_entry_selected(int);
     callback graph_node_selected(int);
     callback refresh_graph_requested();
     callback export_dot_requested();
 
-    // Perturbation Callbacks
+    // Milestone G Callbacks
     callback run_perturbation_campaign_requested();
-
-    // Passport Callbacks
     callback export_passport_json_requested();
     callback export_passport_md_requested();
-
-    // Remediation Callbacks
     callback remediation_proposal_selected(int);
     callback approve_patch_requested(string);
     callback run_verification_rebuild_requested();
 
-    // Keyboard Shortcuts Interceptor
-    forward-focus: key_handler;
-    key_handler := FocusScope {
+    // Keyboard Shortcuts
+    FocusScope {
         key-pressed(event) => {
-            if (event.modifiers.control) {
-                if (event.text == "1") { root.active_tab = 0; return accept; }
-                if (event.text == "2") { root.active_tab = 1; return accept; }
-                if (event.text == "3") { root.active_tab = 2; return accept; }
-                if (event.text == "4") { root.active_tab = 3; return accept; }
-                if (event.text == "5") { root.active_tab = 4; return accept; }
-                if (event.text == "6") { root.active_tab = 5; return accept; }
-                if (event.text == "7") { root.active_tab = 6; return accept; }
-                if (event.text == "8") { root.active_tab = 7; return accept; }
-                if (event.text == "9") { root.active_tab = 8; return accept; }
-                if (event.text == "r") { root.refresh_requested(); return accept; }
-            }
-            if (event.text == "Escape" && root.is_about_open) {
-                root.is_about_open = false;
-                return accept;
+            if event.modifiers.control {
+                if event.text == "1" { root.active_tab = 0; return accept; }
+                if event.text == "2" { root.active_tab = 1; return accept; }
+                if event.text == "3" { root.active_tab = 2; return accept; }
+                if event.text == "4" { root.active_tab = 3; return accept; }
+                if event.text == "5" { root.active_tab = 4; return accept; }
+                if event.text == "6" { root.active_tab = 5; return accept; }
+                if event.text == "7" { root.active_tab = 6; return accept; }
+                if event.text == "8" { root.active_tab = 7; return accept; }
+                if event.text == "9" { root.active_tab = 8; return accept; }
+                if event.text == "r" || event.text == "R" { root.refresh_requested(); return accept; }
             }
             return reject;
         }
-    }
 
-    VerticalLayout {
-        padding: 0px;
-        spacing: 0px;
-
-        // 1. Top Integrated App Header
-        AppHeader {
-            engine_status: root.engine_status;
-            active_backend: root.active_backend;
-            is_software_renderer: root.is_software_renderer;
-            motion_enabled: root.motion_enabled;
-            refresh_clicked => { root.refresh_requested(); }
-            about_clicked => { root.is_about_open = true; }
-        }
-
-        // 2. Main Workspace Layout
         HorizontalLayout {
-            padding: 0px;
             spacing: 0px;
 
-            // Sidebar
             Sidebar {
-                active_index: root.active_tab;
-                tab_selected(idx) => { root.active_tab = idx; }
+                active_tab <=> root.active_tab;
+                app_version: root.app_version;
             }
 
-            // View Deck Container
-            Rectangle {
-                background: Theme.bg_primary;
-                clip: true;
+            VerticalLayout {
+                horizontal-stretch: 1;
+                spacing: 0px;
 
-                if root.active_tab == 0 : OverviewView {
-                    total_builds: root.total_builds;
-                    bit_for_bit_rate: root.bit_for_bit_rate;
-                    normalized_rate: root.normalized_rate;
-                    unresolved_count: root.unresolved_count;
-                    is_loading: root.is_loading;
-                    motion_enabled: root.motion_enabled;
-                    shimmer_progress: root.shimmer_pos;
-                    recent_builds: root.recent_builds;
-                    telemetry_badge: root.overview_telemetry_badge;
-                    host_os_info: root.overview_host_os;
-                    host_cpu_info: root.overview_host_cpu;
-                    host_storage_info: root.overview_host_storage;
+                AppHeader {
+                    active_title:
+                        root.active_tab == 0 ? "Overview & Telemetry" :
+                        root.active_tab == 1 ? "Repositories & GitHub Autoscan" :
+                        root.active_tab == 2 ? "Build Orchestration & Logs" :
+                        root.active_tab == 3 ? "Diff & RCA Diagnostics" :
+                        root.active_tab == 4 ? "Build Drift Causality Graph" :
+                        root.active_tab == 5 ? "Perturbation Lab" :
+                        root.active_tab == 6 ? "Reproducibility Passport" :
+                        root.active_tab == 7 ? "Self-Healing Remediation" :
+                        "Settings & Storage";
+                    engine_status: root.engine_status;
+                    engine_healthy: root.engine_healthy;
+                    engine_backend: root.engine_backend;
+                    app_version: root.app_version;
+                    search_query <=> root.search_query;
+                    search_changed(q) => { root.search_changed(q); }
+                    refresh_requested => { root.refresh_requested(); }
+                    about_requested => { root.show_about = true; }
                 }
 
-                if root.active_tab == 1 : RepositoriesView {
-                    repositories: root.repositories;
-                    selected_repo_index: root.selected_repo_index;
-                    revisions: root.revisions;
-                    repo_selected(idx) => { root.repo_clicked(idx); }
-                    register_local_repo_clicked => { root.register_local_repo_requested(); }
-                    build_revision_clicked(sha) => { root.build_revision_requested(sha); }
-                }
-
-                if root.active_tab == 2 : BuildsView {
-                    build_rows: root.build_rows;
-                    total_count: root.builds_total_count;
-                    filtered_count: root.builds_filtered_count;
-                    selected_build_id: root.selected_build_id;
-                    selected_commit_sha: root.selected_commit_sha;
-                    selected_backend: root.selected_backend;
-                    selected_verdict: root.selected_verdict;
-                    selected_hash: root.selected_hash;
-                    live_build_status: root.live_build_status;
-                    live_build_progress: root.live_build_progress;
-                    live_build_message: root.live_build_message;
-                    live_log_text: root.live_log_text;
-                    is_build_running: root.is_build_running;
-                    search_changed(q) => { root.search_query_changed(q); }
-                    verdict_filter_changed(f) => { root.verdict_filter_changed(f); }
-                    row_selected(idx) => { root.build_row_clicked(idx); }
-                    trigger_build_requested => { root.trigger_build_requested(); }
-                    cancel_build_requested => { root.cancel_build_requested(); }
-                }
-
-                if root.active_tab == 3 : DiagnosticsView {
-                    target_a: root.diag_target_a;
-                    target_b: root.diag_target_b;
-                    primary_verdict: root.diag_verdict;
-                    cri_score: root.diag_cri;
-                    content_ratio: root.diag_content_ratio;
-                    metadata_ratio: root.diag_metadata_ratio;
-                    diff_entries: root.diff_entries;
-                    diagnostic_findings: root.diagnostic_findings;
-                }
-
-                if root.active_tab == 4 : CausalityGraphView {
-                    nodes: root.graph_nodes;
-                    edges: root.graph_edges;
-                    selected_node_index: root.selected_graph_node;
-                    dot_source: root.dot_source;
-                    node_selected(idx) => {
-                        root.selected_graph_node = idx;
-                        root.graph_node_selected(idx);
+                // Subtle dismissible/live status banner when non-empty
+                if root.status_banner != "": Rectangle {
+                    height: 30px;
+                    background: Theme.accent-primary-soft;
+                    Rectangle {
+                        y: parent.height - 1px;
+                        height: 1px;
+                        width: parent.width;
+                        background: #1D4ED8;
                     }
-                    refresh_graph_requested => { root.refresh_graph_requested(); }
-                    export_dot_requested => { root.export_dot_requested(); }
-                }
-
-                if root.active_tab == 5 : PerturbationView {
-                    parameters: root.perturbation_params;
-                    results: root.perturbation_results;
-                    is_running: root.is_perturbation_running;
-                    campaign_summary: root.perturbation_summary;
-                    run_campaign_requested => { root.run_perturbation_campaign_requested(); }
-                }
-
-                if root.active_tab == 6 : PassportView {
-                    passport_id: root.passport_id;
-                    artifact_name: root.passport_artifact_name;
-                    sha256_hash: root.passport_sha256;
-                    schema_version: root.passport_schema_version;
-                    timestamp: root.passport_timestamp;
-                    host_kernel: root.passport_host_kernel;
-                    toolchain_digest: root.passport_toolchain_digest;
-                    verification_status: root.passport_verification_status;
-                    passport_json: root.passport_json;
-                    export_json_requested => { root.export_passport_json_requested(); }
-                    export_markdown_requested => { root.export_passport_md_requested(); }
-                }
-
-                if root.active_tab == 7 : RemediationView {
-                    proposals: root.remediation_proposals;
-                    selected_proposal_index: root.selected_remediation_proposal;
-                    verification_status: root.remediation_verification_status;
-                    is_verifying: root.is_remediation_verifying;
-                    proposal_selected(idx) => {
-                        root.selected_remediation_proposal = idx;
-                        root.remediation_proposal_selected(idx);
+                    HorizontalLayout {
+                        padding-left: 20px;
+                        padding-right: 20px;
+                        alignment: space-between;
+                        Text {
+                            text: root.status_banner;
+                            color: #93C5FD;
+                            font-size: 11.5px;
+                            font-weight: 500;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                        TouchArea {
+                            width: 60px;
+                            mouse-cursor: pointer;
+                            clicked => { root.status_banner = ""; }
+                            Text {
+                                text: "Dismiss";
+                                color: Theme.text-secondary;
+                                font-size: 11px;
+                                vertical-alignment: center;
+                                horizontal-alignment: right;
+                            }
+                        }
                     }
-                    approve_patch_requested(id) => { root.approve_patch_requested(id); }
-                    run_verification_rebuild_requested => { root.run_verification_rebuild_requested(); }
                 }
 
-                if root.active_tab == 8 : SettingsView {
-                    motion_enabled: root.motion_enabled;
-                    active_backend: root.active_backend;
-                    is_software_renderer: root.is_software_renderer;
-                    toggle_motion => { root.motion_enabled = !root.motion_enabled; }
-                    show_about_clicked => { root.is_about_open = true; }
+                // Active View Container
+                Rectangle {
+                    vertical-stretch: 1;
+                    background: Theme.bg-canvas;
+                    clip: true;
+
+                    if root.active_tab == 0: OverviewView {
+                        width: 100%;
+                        height: 100%;
+                        total_builds: root.total_builds;
+                        total_comparisons: root.total_comparisons;
+                        bit_for_bit_rate: root.bit_for_bit_rate;
+                        normalized_rate: root.normalized_rate;
+                        unresolved_count: root.unresolved_count;
+                        cri_bit_ratio: root.cri_bit_ratio;
+                        cri_norm_ratio: root.cri_norm_ratio;
+                        cri_drift_ratio: root.cri_drift_ratio;
+                        host_os: root.host_os;
+                        host_arch: root.host_arch;
+                        detected_toolchains: root.detected_toolchains;
+                        docker_cli_version: root.docker_cli_version;
+                        database_path: root.database_path;
+                        recent_builds: root.recent_builds;
+                        inspect_build_requested(idx) => {
+                            root.selected_build_idx = idx;
+                            root.build_row_clicked(idx);
+                            root.active_tab = 2;
+                        }
+                    }
+
+                    if root.active_tab == 1: ReposView {
+                        width: 100%;
+                        height: 100%;
+                        repos: root.repos;
+                        selected_repo_idx <=> root.selected_repo_idx;
+                        revisions: root.revisions;
+                        selected_revision_idx <=> root.selected_revision_idx;
+                        repo_input_path <=> root.repo_input_path;
+                        fetch_online_github <=> root.fetch_online_github;
+                        workspace_candidates: root.workspace_candidates;
+                        show_workspace_checklist: root.show_workspace_checklist;
+                        workspace_folder_path: root.workspace_folder_path;
+                        workspace_checklist_status: root.workspace_checklist_status;
+                        repo_selected(idx) => { root.repo_selected(idx); }
+                        revision_selected(idx) => { root.revision_selected(idx); }
+                        browse_folder_requested => { root.browse_folder_requested(); }
+                        scan_folder_requested(path) => { root.scan_folder_requested(path); }
+                        autoscan_repo_requested => { root.autoscan_repo_requested(); }
+                        checklist_item_toggled(idx) => { root.checklist_item_toggled(idx); }
+                        checklist_select_all_untracked => { root.checklist_select_all_untracked(); }
+                        confirm_workspace_checklist => { root.confirm_workspace_checklist(); }
+                        dismiss_workspace_checklist => { root.dismiss_workspace_checklist(); }
+                        build_revision_requested(ref_sha) => {
+                            root.build_specific_revision_requested(ref_sha);
+                            root.active_tab = 2;
+                        }
+                    }
+
+                    if root.active_tab == 2: BuildsView {
+                        width: 100%;
+                        height: 100%;
+                        builds: root.builds;
+                        selected_build_idx <=> root.selected_build_idx;
+                        selected_build_log: root.selected_build_log;
+                        selected_hash: root.selected_hash;
+                        selected_artifact_count: root.selected_artifact_count;
+                        selected_backend_type <=> root.selected_backend_type;
+                        docker_available: root.docker_available;
+                        active_build_count: root.active_build_count;
+                        build_row_clicked(idx) => { root.build_row_clicked(idx); }
+                        trigger_build_requested => { root.trigger_build_requested(); }
+                        cancel_build_requested => { root.cancel_build_requested(); }
+                        backend_type_selected(b) => { root.backend_type_selected(b); }
+                    }
+
+                    if root.active_tab == 3: DiagnosticsView {
+                        width: 100%;
+                        height: 100%;
+                        diag_target_a: root.diag_target_a;
+                        diag_target_b: root.diag_target_b;
+                        diag_verdict: root.diag_verdict;
+                        cri_content: root.cri_content;
+                        cri_metadata: root.cri_metadata;
+                        cri_environment: root.cri_environment;
+                        diff_entries: root.diff_entries;
+                        diff_selected_idx <=> root.diff_selected_idx;
+                        selected_diff_snippet: root.selected_diff_snippet;
+                        diagnostic_findings: root.diagnostic_findings;
+                        diff_entry_selected(idx) => { root.diff_entry_selected(idx); }
+                    }
+
+                    if root.active_tab == 4: CausalityGraphView {
+                        width: 100%;
+                        height: 100%;
+                        nodes: root.graph_nodes;
+                        edges: root.graph_edges;
+                        selected_node_idx <=> root.selected_graph_node_idx;
+                        node_selected(idx) => { root.graph_node_selected(idx); }
+                        refresh_graph_requested => { root.refresh_graph_requested(); }
+                        export_dot_requested => { root.export_dot_requested(); }
+                    }
+
+                    if root.active_tab == 5: PerturbationView {
+                        width: 100%;
+                        height: 100%;
+                        params: root.perturbation_params;
+                        results: root.sensitivity_results;
+                        is_running: root.perturbation_running;
+                        run_campaign_requested => { root.run_perturbation_campaign_requested(); }
+                    }
+
+                    if root.active_tab == 6: PassportView {
+                        width: 100%;
+                        height: 100%;
+                        passport_json: root.passport_json;
+                        passport_repo: root.passport_repo;
+                        passport_status: root.passport_status;
+                        export_json_requested => { root.export_passport_json_requested(); }
+                        export_md_requested => { root.export_passport_md_requested(); }
+                    }
+
+                    if root.active_tab == 7: RemediationView {
+                        width: 100%;
+                        height: 100%;
+                        proposals: root.remediation_proposals;
+                        selected_proposal_idx <=> root.selected_proposal_idx;
+                        proposal_selected(idx) => { root.remediation_proposal_selected(idx); }
+                        approve_patch_requested(id) => { root.approve_patch_requested(id); }
+                        run_verification_rebuild_requested => { root.run_verification_rebuild_requested(); }
+                    }
+
+                    if root.active_tab == 8: SettingsView {
+                        width: 100%;
+                        height: 100%;
+                        storage_db_path: root.storage_db_path;
+                        storage_artifacts_path: root.storage_artifacts_path;
+                        storage_workspaces_path: root.storage_workspaces_path;
+                        docker_available: root.docker_available;
+                        app_version: root.app_version;
+                    }
                 }
             }
         }
     }
 
-    // Modal Overlays
     AboutModal {
-        is_open: root.is_about_open;
-        close_clicked => { root.is_about_open = false; }
+        show: root.show_about;
+        version: root.app_version;
+        close_requested => { root.show_about = false; }
     }
 }

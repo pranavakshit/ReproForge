@@ -1,169 +1,181 @@
 import { Theme } from "../theme.slint";
+import {
+    IconOverview, IconRepo, IconBuild, IconDiff, IconGraph,
+    IconLab, IconPassport, IconHeal, IconSettings
+} from "./icons.slint";
 
-export component Sidebar inherits Rectangle {
-    in property <int> active_index: 0;
-    callback tab_selected(int);
+component NavItem inherits Rectangle {
+    in property <string> label;
+    in property <bool> selected: false;
+    in property <string> hotkey: "";
+    in property <int> kind: 0;
+    callback clicked();
 
-    width: 230px;
-    background: Theme.bg_secondary;
+    height: 35px;
+    border-radius: Theme.radius-sm;
+    background: root.selected ? Theme.accent-primary-soft : (ta.has-hover ? Theme.bg-hover : transparent);
     border-width: 1px;
-    border-color: Theme.border_subtle;
+    border-color: root.selected ? #264882 : transparent;
 
-    VerticalLayout {
-        padding: 12px;
-        spacing: 4px;
-        alignment: start;
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 10px;
+
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 16px;
+                height: 16px;
+                if root.kind == 0: IconOverview { icon-color: root.selected ? Theme.accent-cyan : Theme.text-secondary; }
+                if root.kind == 1: IconRepo { icon-color: root.selected ? Theme.accent-cyan : Theme.text-secondary; }
+                if root.kind == 2: IconBuild { icon-color: root.selected ? Theme.accent-cyan : Theme.text-secondary; }
+                if root.kind == 3: IconDiff { icon-color: root.selected ? Theme.accent-cyan : Theme.text-secondary; }
+                if root.kind == 4: IconGraph { icon-color: root.selected ? Theme.accent-cyan : Theme.text-secondary; }
+                if root.kind == 5: IconLab { icon-color: root.selected ? Theme.accent-cyan : Theme.text-secondary; }
+                if root.kind == 6: IconPassport { icon-color: root.selected ? Theme.accent-cyan : Theme.text-secondary; }
+                if root.kind == 7: IconHeal { icon-color: root.selected ? Theme.accent-cyan : Theme.text-secondary; }
+                if root.kind == 8: IconSettings { icon-color: root.selected ? Theme.accent-cyan : Theme.text-secondary; }
+            }
+        }
 
         Text {
-            text: "NAVIGATION";
+            text: root.label;
+            color: root.selected ? Theme.text-primary : Theme.text-secondary;
+            font-size: 12.5px;
+            font-weight: root.selected ? 700 : 500;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+
+        if root.hotkey != "": Text {
+            text: root.hotkey;
+            color: root.selected ? #93C5FD : Theme.text-muted;
             font-size: 10px;
-            font-weight: 700;
-            color: Theme.text_dim;
-            letter-spacing: 0.8px;
-            padding-bottom: 4px;
+            vertical-alignment: center;
         }
+    }
 
-        // Tab 0: Overview
-        Rectangle {
-            height: 36px;
-            border-radius: Theme.radius_md;
-            background: (root.active_index == 0) ? Theme.bg_active :
-                        (t0_touch.has_hover ? Theme.bg_hover : transparent);
-            border-width: 1px;
-            border-color: (root.active_index == 0) ? Theme.border_accent : transparent;
-            t0_touch := TouchArea { clicked => { root.tab_selected(0); } }
-            HorizontalLayout {
-                padding-left: 10px; padding-right: 10px; alignment: space-between;
-                Text { text: "Overview Dashboard"; font-size: 12px; font-weight: (root.active_index == 0) ? 600 : 500; color: (root.active_index == 0) ? Theme.accent_cyan : Theme.text_secondary; vertical-alignment: center; }
-                Text { text: "Ctrl+1"; font-size: 9px; color: Theme.text_dim; vertical-alignment: center; }
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+component NavSectionLabel inherits Text {
+    in property <string> label;
+    text: root.label;
+    color: Theme.text-muted;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.9px;
+}
+
+export component Sidebar inherits Rectangle {
+    in-out property <int> active_tab: 0;
+    in property <string> app_version: "0.2.0";
+
+    width: 220px;
+    background: Theme.bg-sidebar;
+
+    // Right hairline border
+    Rectangle {
+        x: parent.width - 1px;
+        y: 0px;
+        width: 1px;
+        height: parent.height;
+        background: Theme.border-subtle;
+    }
+
+    VerticalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        padding-top: 14px;
+        padding-bottom: 12px;
+        spacing: 14px;
+
+        // Brand Identity Block
+        HorizontalLayout {
+            padding-left: 4px;
+            spacing: 10px;
+
+            Rectangle {
+                width: 34px;
+                height: 34px;
+                border-radius: Theme.radius-md;
+                background: Theme.accent-primary-soft;
+                border-width: 1px;
+                border-color: Theme.accent-primary;
+
+                Text {
+                    text: "RF";
+                    color: #93C5FD;
+                    font-size: 14px;
+                    font-weight: 800;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+
+            VerticalLayout {
+                alignment: center;
+                spacing: 1px;
+                Text {
+                    text: "ReproForge";
+                    color: Theme.text-primary;
+                    font-size: 15px;
+                    font-weight: 800;
+                }
+                Text {
+                    text: "Diagnostic Studio";
+                    color: Theme.accent-cyan;
+                    font-size: 10px;
+                    font-weight: 600;
+                }
             }
         }
 
-        // Tab 1: Repositories
-        Rectangle {
-            height: 36px;
-            border-radius: Theme.radius_md;
-            background: (root.active_index == 1) ? Theme.bg_active :
-                        (t1_touch.has_hover ? Theme.bg_hover : transparent);
-            border-width: 1px;
-            border-color: (root.active_index == 1) ? Theme.border_accent : transparent;
-            t1_touch := TouchArea { clicked => { root.tab_selected(1); } }
-            HorizontalLayout {
-                padding-left: 10px; padding-right: 10px; alignment: space-between;
-                Text { text: "Repositories"; font-size: 12px; font-weight: (root.active_index == 1) ? 600 : 500; color: (root.active_index == 1) ? Theme.accent_cyan : Theme.text_secondary; vertical-alignment: center; }
-                Text { text: "Ctrl+2"; font-size: 9px; color: Theme.text_dim; vertical-alignment: center; }
-            }
+        Rectangle { height: 1px; background: Theme.border-subtle; }
+
+        // Navigation Groups
+        VerticalLayout {
+            spacing: 4px;
+            vertical-stretch: 1;
+
+            NavSectionLabel { label: "WORKSPACE"; }
+            NavItem { label: "Overview"; kind: 0; hotkey: "^1"; selected: root.active_tab == 0; clicked => { root.active_tab = 0; } }
+            NavItem { label: "Repositories"; kind: 1; hotkey: "^2"; selected: root.active_tab == 1; clicked => { root.active_tab = 1; } }
+            NavItem { label: "Builds & Logs"; kind: 2; hotkey: "^3"; selected: root.active_tab == 2; clicked => { root.active_tab = 2; } }
+
+            Rectangle { height: 8px; }
+            NavSectionLabel { label: "ANALYSIS"; }
+            NavItem { label: "Diff & Diagnostics"; kind: 3; hotkey: "^4"; selected: root.active_tab == 3; clicked => { root.active_tab = 3; } }
+            NavItem { label: "Causality Graph"; kind: 4; hotkey: "^5"; selected: root.active_tab == 4; clicked => { root.active_tab = 4; } }
+
+            Rectangle { height: 8px; }
+            NavSectionLabel { label: "VERIFICATION"; }
+            NavItem { label: "Perturbation Lab"; kind: 5; hotkey: "^6"; selected: root.active_tab == 5; clicked => { root.active_tab = 5; } }
+            NavItem { label: "Passport & Audit"; kind: 6; hotkey: "^7"; selected: root.active_tab == 6; clicked => { root.active_tab = 6; } }
+            NavItem { label: "Remediation"; kind: 7; hotkey: "^8"; selected: root.active_tab == 7; clicked => { root.active_tab = 7; } }
         }
 
-        // Tab 2: Build Executions
-        Rectangle {
-            height: 36px;
-            border-radius: Theme.radius_md;
-            background: (root.active_index == 2) ? Theme.bg_active :
-                        (t2_touch.has_hover ? Theme.bg_hover : transparent);
-            border-width: 1px;
-            border-color: (root.active_index == 2) ? Theme.border_accent : transparent;
-            t2_touch := TouchArea { clicked => { root.tab_selected(2); } }
-            HorizontalLayout {
-                padding-left: 10px; padding-right: 10px; alignment: space-between;
-                Text { text: "Build Executions"; font-size: 12px; font-weight: (root.active_index == 2) ? 600 : 500; color: (root.active_index == 2) ? Theme.accent_cyan : Theme.text_secondary; vertical-alignment: center; }
-                Text { text: "Ctrl+3"; font-size: 9px; color: Theme.text_dim; vertical-alignment: center; }
-            }
-        }
+        Rectangle { height: 1px; background: Theme.border-subtle; }
 
-        // Tab 3: Diff & Diagnostics
-        Rectangle {
-            height: 36px;
-            border-radius: Theme.radius_md;
-            background: (root.active_index == 3) ? Theme.bg_active :
-                        (t3_touch.has_hover ? Theme.bg_hover : transparent);
-            border-width: 1px;
-            border-color: (root.active_index == 3) ? Theme.border_accent : transparent;
-            t3_touch := TouchArea { clicked => { root.tab_selected(3); } }
-            HorizontalLayout {
-                padding-left: 10px; padding-right: 10px; alignment: space-between;
-                Text { text: "Diff & Diagnostics"; font-size: 12px; font-weight: (root.active_index == 3) ? 600 : 500; color: (root.active_index == 3) ? Theme.accent_cyan : Theme.text_secondary; vertical-alignment: center; }
-                Text { text: "Ctrl+4"; font-size: 9px; color: Theme.text_dim; vertical-alignment: center; }
-            }
-        }
+        NavItem { label: "Settings & Storage"; kind: 8; hotkey: "^9"; selected: root.active_tab == 8; clicked => { root.active_tab = 8; } }
 
-        // Tab 4: Build Drift Causality Graph
-        Rectangle {
-            height: 36px;
-            border-radius: Theme.radius_md;
-            background: (root.active_index == 4) ? Theme.bg_active :
-                        (t4_touch.has_hover ? Theme.bg_hover : transparent);
-            border-width: 1px;
-            border-color: (root.active_index == 4) ? Theme.border_accent : transparent;
-            t4_touch := TouchArea { clicked => { root.tab_selected(4); } }
-            HorizontalLayout {
-                padding-left: 10px; padding-right: 10px; alignment: space-between;
-                Text { text: "Causality Graph"; font-size: 12px; font-weight: (root.active_index == 4) ? 600 : 500; color: (root.active_index == 4) ? Theme.accent_cyan : Theme.text_secondary; vertical-alignment: center; }
-                Text { text: "Ctrl+5"; font-size: 9px; color: Theme.text_dim; vertical-alignment: center; }
+        HorizontalLayout {
+            padding-left: 6px;
+            padding-right: 6px;
+            alignment: space-between;
+            Text {
+                text: "v" + root.app_version;
+                color: Theme.text-muted;
+                font-size: 10.5px;
             }
-        }
-
-        // Tab 5: Controlled Perturbation Lab
-        Rectangle {
-            height: 36px;
-            border-radius: Theme.radius_md;
-            background: (root.active_index == 5) ? Theme.bg_active :
-                        (t5_touch.has_hover ? Theme.bg_hover : transparent);
-            border-width: 1px;
-            border-color: (root.active_index == 5) ? Theme.border_accent : transparent;
-            t5_touch := TouchArea { clicked => { root.tab_selected(5); } }
-            HorizontalLayout {
-                padding-left: 10px; padding-right: 10px; alignment: space-between;
-                Text { text: "Perturbation Lab"; font-size: 12px; font-weight: (root.active_index == 5) ? 600 : 500; color: (root.active_index == 5) ? Theme.accent_cyan : Theme.text_secondary; vertical-alignment: center; }
-                Text { text: "Ctrl+6"; font-size: 9px; color: Theme.text_dim; vertical-alignment: center; }
-            }
-        }
-
-        // Tab 6: Reproducibility Passport
-        Rectangle {
-            height: 36px;
-            border-radius: Theme.radius_md;
-            background: (root.active_index == 6) ? Theme.bg_active :
-                        (t6_touch.has_hover ? Theme.bg_hover : transparent);
-            border-width: 1px;
-            border-color: (root.active_index == 6) ? Theme.border_accent : transparent;
-            t6_touch := TouchArea { clicked => { root.tab_selected(6); } }
-            HorizontalLayout {
-                padding-left: 10px; padding-right: 10px; alignment: space-between;
-                Text { text: "Passport Provenance"; font-size: 12px; font-weight: (root.active_index == 6) ? 600 : 500; color: (root.active_index == 6) ? Theme.accent_cyan : Theme.text_secondary; vertical-alignment: center; }
-                Text { text: "Ctrl+7"; font-size: 9px; color: Theme.text_dim; vertical-alignment: center; }
-            }
-        }
-
-        // Tab 7: Self-Healing Remediation
-        Rectangle {
-            height: 36px;
-            border-radius: Theme.radius_md;
-            background: (root.active_index == 7) ? Theme.bg_active :
-                        (t7_touch.has_hover ? Theme.bg_hover : transparent);
-            border-width: 1px;
-            border-color: (root.active_index == 7) ? Theme.border_accent : transparent;
-            t7_touch := TouchArea { clicked => { root.tab_selected(7); } }
-            HorizontalLayout {
-                padding-left: 10px; padding-right: 10px; alignment: space-between;
-                Text { text: "Self-Healing Cockpit"; font-size: 12px; font-weight: (root.active_index == 7) ? 600 : 500; color: (root.active_index == 7) ? Theme.accent_cyan : Theme.text_secondary; vertical-alignment: center; }
-                Text { text: "Ctrl+8"; font-size: 9px; color: Theme.text_dim; vertical-alignment: center; }
-            }
-        }
-
-        // Tab 8: Settings & System
-        Rectangle {
-            height: 36px;
-            border-radius: Theme.radius_md;
-            background: (root.active_index == 8) ? Theme.bg_active :
-                        (t8_touch.has_hover ? Theme.bg_hover : transparent);
-            border-width: 1px;
-            border-color: (root.active_index == 8) ? Theme.border_accent : transparent;
-            t8_touch := TouchArea { clicked => { root.tab_selected(8); } }
-            HorizontalLayout {
-                padding-left: 10px; padding-right: 10px; alignment: space-between;
-                Text { text: "Settings & System"; font-size: 12px; font-weight: (root.active_index == 8) ? 600 : 500; color: (root.active_index == 8) ? Theme.accent_cyan : Theme.text_secondary; vertical-alignment: center; }
-                Text { text: "Ctrl+9"; font-size: 9px; color: Theme.text_dim; vertical-alignment: center; }
+            Text {
+                text: "IPC 1.0";
+                color: Theme.text-muted;
+                font-size: 10.5px;
             }
         }
     }

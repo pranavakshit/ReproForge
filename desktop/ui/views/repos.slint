@@ -1,293 +1,584 @@
+import { ListView } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
+import { ActionButton } from "../components/action_button.slint";
+import { PanelCard } from "../components/panel_card.slint";
+import { StatusBadge } from "../components/status_badge.slint";
+import { IconFolder, IconGitHub, IconRefresh, IconPlay, IconCheck } from "../components/icons.slint";
 
 export struct RepoItem {
     id: string,
     name: string,
-    remote_url: string,
-    default_branch: string,
+    url: string,
+    branch: string,
     build_system: string,
     revisions_count: int,
+    github_slug: string,
+    upstream_url: string,
+    readiness_status: string,
+    readiness_warnings: string,
+    last_scanned: string,
 }
 
 export struct RevisionItem {
-    commit_sha: string,
-    author: string,
+    sha: string,
     message: string,
-    timestamp: string,
-    is_pinned: bool,
+    author: string,
+    date: string,
 }
 
-export component RepositoriesView inherits Rectangle {
-    in property <[RepoItem]> repositories: [];
-    in property <int> selected_repo_index: 0;
+export struct WorkspaceCandidateItem {
+    name: string,
+    repo_path: string,
+    default_branch: string,
+    github_slug: string,
+    upstream_url: string,
+    already_tracked: bool,
+    checked: bool,
+}
+
+export component ReposView inherits Rectangle {
+    in property <[RepoItem]> repos: [];
+    in-out property <int> selected_repo_idx: 0;
     in property <[RevisionItem]> revisions: [];
+    in-out property <int> selected_revision_idx: 0;
+
+    in-out property <string> repo_input_path: "";
+    in-out property <bool> fetch_online_github: true;
+    in property <[WorkspaceCandidateItem]> workspace_candidates: [];
+    in property <bool> show_workspace_checklist: false;
+    in property <string> workspace_folder_path: "";
+    in property <string> workspace_checklist_status: "";
 
     callback repo_selected(int);
-    callback register_local_repo_clicked();
-    callback build_revision_clicked(string);
+    callback revision_selected(int);
+    callback browse_folder_requested();
+    callback scan_folder_requested(string);
+    callback autoscan_repo_requested();
+    callback checklist_item_toggled(int);
+    callback checklist_select_all_untracked();
+    callback confirm_workspace_checklist();
+    callback dismiss_workspace_checklist();
+    callback build_revision_requested(string);
 
-    background: Theme.bg_primary;
+    background: Theme.bg-canvas;
 
     VerticalLayout {
         padding: 20px;
-        spacing: 16px;
-        alignment: start;
+        spacing: 14px;
 
-        // View Header
-        HorizontalLayout {
-            alignment: space-between;
+        // Top Folder / GitHub Autoscan Bar
+        PanelCard {
+            inner-padding: 12px;
+            inner-spacing: 10px;
+
             HorizontalLayout {
                 spacing: 10px;
-                Text {
-                    text: "Tracked Repositories & Revisions";
-                    font-size: 18px;
-                    font-weight: 700;
-                    color: Theme.text_primary;
-                    vertical-alignment: center;
-                }
+
                 Rectangle {
-                    height: 20px;
-                    border-radius: Theme.radius_sm;
-                    background: Theme.bg_card;
+                    horizontal-stretch: 1;
+                    height: 34px;
+                    background: Theme.bg-input;
+                    border-radius: Theme.radius-sm;
                     border-width: 1px;
-                    border-color: Theme.status_exact;
+                    border-color: path-edit.has-focus ? Theme.border-active : Theme.border-subtle;
+
                     HorizontalLayout {
-                        padding-left: 6px; padding-right: 6px; alignment: center;
-                        Text { text: "Live Git & Repos"; font-size: 10px; font-weight: 600; color: Theme.status_exact; vertical-alignment: center; }
+                        padding-left: 10px;
+                        padding-right: 10px;
+                        spacing: 8px;
+
+                        VerticalLayout {
+                            alignment: center;
+                            IconFolder { icon-size: 14px; icon-color: Theme.text-muted; }
+                        }
+
+                        path-edit := TextInput {
+                            text <=> root.repo_input_path;
+                            color: Theme.text-primary;
+                            font-size: 12px;
+                            vertical-alignment: center;
+                            single-line: true;
+                            horizontal-stretch: 1;
+                            accepted => { root.scan_folder_requested(root.repo_input_path); }
+                        }
+                    }
+
+                    if path-edit.text == "" && !path-edit.has-focus: Text {
+                        x: 32px;
+                        y: 9px;
+                        text: "Paste local repo, workspace folder (e.g. D:\\Repositories), or GitHub URL...";
+                        color: Theme.text-muted;
+                        font-size: 11.5px;
                     }
                 }
-            }
 
-            // Register Local Repo Action Button
-            Rectangle {
-                width: 160px;
-                height: 28px;
-                border-radius: Theme.radius_sm;
-                background: reg_touch.has_hover ? Theme.accent_blue_hover : Theme.accent_blue;
+                // Online GitHub API Toggle Pill
+                Rectangle {
+                    height: 34px;
+                    border-radius: Theme.radius-sm;
+                    background: root.fetch_online_github ? Theme.accent-primary-soft : Theme.bg-elevated;
+                    border-width: 1px;
+                    border-color: root.fetch_online_github ? #264882 : Theme.border-muted;
 
-                reg_touch := TouchArea {
-                    clicked => { root.register_local_repo_clicked(); }
+                    HorizontalLayout {
+                        padding-left: 10px;
+                        padding-right: 10px;
+                        spacing: 6px;
+
+                        VerticalLayout {
+                            alignment: center;
+                            Rectangle {
+                                width: 14px;
+                                height: 14px;
+                                border-radius: 3px;
+                                background: root.fetch_online_github ? Theme.accent-primary : Theme.bg-input;
+                                border-width: 1px;
+                                border-color: root.fetch_online_github ? Theme.accent-primary : Theme.border-muted;
+                                if root.fetch_online_github: VerticalLayout {
+                                    alignment: center;
+                                    HorizontalLayout {
+                                        alignment: center;
+                                        IconCheck { icon-size: 10px; icon-color: #FFFFFF; stroke-w: 2.4px; }
+                                    }
+                                }
+                            }
+                        }
+
+                        Text {
+                            text: "GitHub API";
+                            color: root.fetch_online_github ? #93C5FD : Theme.text-secondary;
+                            font-size: 11.5px;
+                            font-weight: 600;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.fetch_online_github = !root.fetch_online_github; }
+                    }
                 }
 
-                HorizontalLayout {
-                    alignment: center;
-                    spacing: 6px;
-                    Text { text: "+ Sync Local Repo"; font-size: 11px; font-weight: 600; color: #FFFFFF; vertical-alignment: center; }
+                ActionButton {
+                    label: "Browse Folder";
+                    variant: "secondary";
+                    btn-height: 34px;
+                    clicked => { root.browse_folder_requested(); }
+                    IconFolder { icon-size: 13px; icon-color: Theme.text-secondary; }
+                }
+
+                ActionButton {
+                    label: "Scan & Track";
+                    variant: "primary";
+                    btn-height: 34px;
+                    clicked => { root.scan_folder_requested(root.repo_input_path); }
+                    IconGitHub { icon-size: 13px; icon-color: #FFFFFF; }
                 }
             }
         }
 
-        // Master-Detail Split
+        // Main Split Pane: Tracked Repositories + Detail Inspector
         HorizontalLayout {
+            vertical-stretch: 1;
             spacing: 16px;
 
-            // Master: Repository List
-            Rectangle {
-                width: 320px;
-                height: 520px;
-                background: Theme.bg_secondary;
-                border-radius: Theme.radius_md;
-                border-width: 1px;
-                border-color: Theme.border_subtle;
+            // Left Tracked Repositories List
+            PanelCard {
+                width: 340px;
+                title: "Tracked Repositories (" + root.repos.length + ")";
+                subtitle: "Select a repository to view GitHub upstream & commits";
 
-                VerticalLayout {
-                    padding: 12px;
-                    spacing: 8px;
-
-                    Text {
-                        text: "REGISTERED REPOSITORIES";
-                        font-size: 11px;
-                        font-weight: 600;
-                        color: Theme.text_muted;
-                        letter-spacing: 0.5px;
-                        padding-bottom: 4px;
-                    }
-
-                    for repo[idx] in root.repositories : Rectangle {
-                        height: 72px;
-                        border-radius: Theme.radius_md;
-                        background: (root.selected_repo_index == idx) ? Theme.bg_active :
-                                    (repo_touch.has_hover ? Theme.bg_hover : Theme.bg_card);
+                ListView {
+                    vertical-stretch: 1;
+                    for repo[idx] in root.repos: Rectangle {
+                        height: 76px;
+                        border-radius: Theme.radius-sm;
+                        background: idx == root.selected_repo_idx ? Theme.accent-primary-soft : (r-ta.has-hover ? Theme.bg-hover : Theme.bg-elevated);
                         border-width: 1px;
-                        border-color: (root.selected_repo_index == idx) ? Theme.border_accent : Theme.border_subtle;
-
-                        repo_touch := TouchArea {
-                            clicked => { root.repo_selected(idx); }
-                        }
+                        border-color: idx == root.selected_repo_idx ? Theme.accent-primary : Theme.border-subtle;
 
                         VerticalLayout {
                             padding: 10px;
-                            alignment: space-between;
+                            spacing: 5px;
 
                             HorizontalLayout {
-                                alignment: space-between;
+                                spacing: 6px;
                                 Text {
                                     text: repo.name;
+                                    color: Theme.text-primary;
                                     font-size: 13px;
-                                    font-weight: 600;
-                                    color: (root.selected_repo_index == idx) ? Theme.accent_cyan : Theme.text_primary;
+                                    font-weight: 700;
+                                    horizontal-stretch: 1;
+                                    overflow: elide;
+                                    vertical-alignment: center;
                                 }
-                                Rectangle {
-                                    height: 18px;
-                                    border-radius: Theme.radius_sm;
-                                    background: Theme.bg_elevated;
-                                    HorizontalLayout {
-                                        padding-left: 6px; padding-right: 6px; alignment: center;
-                                        Text { text: repo.build_system; font-size: 9px; font-weight: 600; color: Theme.text_secondary; }
-                                    }
+                                StatusBadge {
+                                    text: repo.build_system;
+                                    kind: "info";
                                 }
-                            }
-
-                            Text {
-                                text: repo.remote_url;
-                                font-size: 10px;
-                                color: Theme.text_dim;
-                                overflow: elide;
                             }
 
                             HorizontalLayout {
-                                alignment: space-between;
-                                Text { text: "Branch: " + repo.default_branch; font-size: 10px; color: Theme.text_muted; }
-                                Text { text: repo.revisions_count + " builds"; font-size: 10px; color: Theme.text_muted; }
+                                spacing: 6px;
+                                if repo.github_slug != "": HorizontalLayout {
+                                    spacing: 4px;
+                                    horizontal-stretch: 1;
+                                    VerticalLayout {
+                                        alignment: center;
+                                        IconGitHub { icon-size: 12px; icon-color: Theme.accent-cyan; }
+                                    }
+                                    Text {
+                                        text: repo.github_slug;
+                                        color: Theme.accent-cyan;
+                                        font-size: 11px;
+                                        font-weight: 500;
+                                        overflow: elide;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                                if repo.github_slug == "": Text {
+                                    text: repo.url;
+                                    color: Theme.text-muted;
+                                    font-size: 10.5px;
+                                    horizontal-stretch: 1;
+                                    overflow: elide;
+                                    vertical-alignment: center;
+                                }
+                                Text {
+                                    text: repo.branch;
+                                    color: Theme.text-secondary;
+                                    font-size: 10.5px;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+
+                        r-ta := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                root.selected_repo_idx = idx;
+                                root.repo_selected(idx);
                             }
                         }
                     }
                 }
             }
 
-            // Detail: Revision History & Detected Configuration
-            Rectangle {
+            // Right Repository & GitHub Audit + Revisions
+            VerticalLayout {
                 horizontal-stretch: 1;
-                height: 520px;
-                background: Theme.bg_secondary;
-                border-radius: Theme.radius_md;
-                border-width: 1px;
-                border-color: Theme.border_subtle;
+                spacing: 14px;
 
-                VerticalLayout {
-                    padding: 16px;
-                    spacing: 12px;
+                if root.selected_repo_idx >= 0 && root.selected_repo_idx < root.repos.length: PanelCard {
+                    title: root.repos[root.selected_repo_idx].name;
+                    subtitle: root.repos[root.selected_repo_idx].url;
 
-                    // Detail Header
                     HorizontalLayout {
+                        spacing: 10px;
                         alignment: space-between;
+
+                        HorizontalLayout {
+                            spacing: 8px;
+                            StatusBadge {
+                                text: root.repos[root.selected_repo_idx].github_slug != "" ? ("GitHub: " + root.repos[root.selected_repo_idx].github_slug) : "Local Repo Only";
+                                kind: root.repos[root.selected_repo_idx].github_slug != "" ? "info" : "neutral";
+                            }
+                            StatusBadge {
+                                text: "Readiness: " + root.repos[root.selected_repo_idx].readiness_status;
+                                kind: root.repos[root.selected_repo_idx].readiness_status == "ready" ? "success" : "warning";
+                            }
+                            StatusBadge {
+                                text: root.repos[root.selected_repo_idx].revisions_count + " commits";
+                                kind: "neutral";
+                            }
+                        }
+
+                        ActionButton {
+                            label: "Re-Scan GitHub";
+                            variant: "secondary";
+                            btn-height: 28px;
+                            clicked => { root.autoscan_repo_requested(); }
+                            IconRefresh { icon-size: 12px; icon-color: Theme.text-secondary; }
+                        }
+                    }
+
+                    if root.repos[root.selected_repo_idx].readiness_warnings != "": Rectangle {
+                        background: Theme.status-warning-soft;
+                        border-radius: Theme.radius-sm;
+                        border-width: 1px;
+                        border-color: #78350F;
+
                         VerticalLayout {
-                            spacing: 4px;
+                            padding: 9px;
+                            spacing: 2px;
                             Text {
-                                text: "Git Revisions & Build Configuration";
-                                font-size: 14px;
-                                font-weight: 700;
-                                color: Theme.text_primary;
-                            }
-                            Text {
-                                text: "Deterministic commit pinning and isolation metadata";
+                                text: "Static Readiness & Upstream Audit Findings";
+                                color: #FCD34D;
                                 font-size: 11px;
-                                color: Theme.text_dim;
+                                font-weight: 700;
+                            }
+                            Text {
+                                text: root.repos[root.selected_repo_idx].readiness_warnings;
+                                color: #FDE68A;
+                                font-size: 11px;
+                                wrap: word-wrap;
                             }
                         }
                     }
+                }
 
-                    // Configuration Card
-                    Rectangle {
-                        height: 70px;
-                        background: Theme.bg_card;
-                        border-radius: Theme.radius_md;
-                        border-width: 1px;
-                        border-color: Theme.border_subtle;
+                PanelCard {
+                    vertical-stretch: 1;
+                    title: "Git Revision History";
+                    subtitle: "Clean deterministic commit targets exported via git archive";
 
-                        HorizontalLayout {
-                            padding: 12px;
-                            spacing: 20px;
-                            alignment: space-between;
-
-                            VerticalLayout {
-                                spacing: 4px;
-                                Text { text: "BUILD SPECIFICATION"; font-size: 10px; font-weight: 600; color: Theme.text_dim; }
-                                Text { text: "Multi-stage Dockerfile"; font-size: 12px; font-weight: 600; color: Theme.accent_cyan; }
-                            }
-                            VerticalLayout {
-                                spacing: 4px;
-                                Text { text: "ISOLATION PROFILE"; font-size: 10px; font-weight: 600; color: Theme.text_dim; }
-                                Text { text: "BuildKit Sandbox (Network Gated)"; font-size: 12px; font-weight: 600; color: Theme.status_exact; }
-                            }
-                            VerticalLayout {
-                                spacing: 4px;
-                                Text { text: "TIMESTAMP CLAMPING"; font-size: 10px; font-weight: 600; color: Theme.text_dim; }
-                                Text { text: "SOURCE_DATE_EPOCH=1700000000"; font-size: 12px; color: Theme.text_secondary; }
-                            }
+                    if root.revisions.length == 0: Rectangle {
+                        vertical-stretch: 1;
+                        Text {
+                            text: "No git commits loaded for this repository yet.";
+                            color: Theme.text-muted;
+                            font-size: 12px;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
                         }
                     }
 
-                    Text {
-                        text: "PINNED REVISIONS";
-                        font-size: 11px;
-                        font-weight: 600;
-                        color: Theme.text_muted;
-                        letter-spacing: 0.5px;
-                        padding-top: 4px;
-                    }
-
-                    // Revision List
-                    for rev in root.revisions : Rectangle {
-                        height: 52px;
-                        background: Theme.bg_card;
-                        border-radius: Theme.radius_sm;
-                        border-width: 1px;
-                        border-color: Theme.border_subtle;
-
-                        HorizontalLayout {
-                            padding-left: 12px; padding-right: 12px;
-                            alignment: space-between;
-
-                            VerticalLayout {
-                                alignment: center;
-                                spacing: 3px;
-                                HorizontalLayout {
-                                    spacing: 8px;
-                                    Text { text: rev.commit_sha; font-size: 12px; font-weight: 700; color: Theme.text_primary; }
-                                    if rev.is_pinned : Rectangle {
-                                        height: 16px; border-radius: Theme.radius_sm; background: Theme.status_exact_bg;
-                                        HorizontalLayout {
-                                            padding-left: 6px; padding-right: 6px; alignment: center;
-                                            Text { text: "PINNED TARGET"; font-size: 9px; font-weight: 700; color: Theme.status_exact; }
-                                        }
-                                    }
-                                }
-                                Text { text: rev.message; font-size: 11px; color: Theme.text_secondary; }
-                            }
+                    if root.revisions.length > 0: ListView {
+                        vertical-stretch: 1;
+                        for rev[idx] in root.revisions: Rectangle {
+                            height: 52px;
+                            border-radius: Theme.radius-sm;
+                            background: idx == root.selected_revision_idx ? Theme.accent-primary-soft : (rev-ta.has-hover ? Theme.bg-hover : transparent);
+                            border-width: 1px;
+                            border-color: idx == root.selected_revision_idx ? #264882 : Theme.border-subtle;
 
                             HorizontalLayout {
+                                padding-left: 12px;
+                                padding-right: 12px;
                                 spacing: 12px;
-                                alignment: center;
 
                                 VerticalLayout {
                                     alignment: center;
-                                    Text { text: rev.author; font-size: 11px; color: Theme.text_muted; horizontal-alignment: end; }
-                                    Text { text: rev.timestamp; font-size: 10px; color: Theme.text_dim; horizontal-alignment: end; }
-                                }
-
-                                Rectangle {
-                                    width: 76px;
-                                    height: 26px;
-                                    border-radius: Theme.radius_sm;
-                                    background: bld_touch.has_hover ? Theme.status_exact : Theme.status_exact_bg;
-                                    border-width: 1px;
-                                    border-color: Theme.status_exact;
-
-                                    bld_touch := TouchArea {
-                                        clicked => { root.build_revision_clicked(rev.commit_sha); }
-                                    }
-
-                                    HorizontalLayout {
-                                        alignment: center;
+                                    width: 74px;
+                                    Rectangle {
+                                        height: 22px;
+                                        border-radius: Theme.radius-xs;
+                                        background: Theme.bg-input;
+                                        border-width: 1px;
+                                        border-color: Theme.border-muted;
                                         Text {
-                                            text: "▶ Run Build";
-                                            font-size: 10px;
+                                            text: rev.sha;
+                                            color: Theme.accent-cyan;
+                                            font-size: 11px;
                                             font-weight: 700;
-                                            color: bld_touch.has_hover ? #FFFFFF : Theme.status_exact;
+                                            horizontal-alignment: center;
                                             vertical-alignment: center;
                                         }
                                     }
+                                }
+
+                                VerticalLayout {
+                                    alignment: center;
+                                    horizontal-stretch: 1;
+                                    spacing: 2px;
+                                    Text {
+                                        text: rev.message;
+                                        color: Theme.text-primary;
+                                        font-size: 12px;
+                                        font-weight: 600;
+                                        overflow: elide;
+                                    }
+                                    Text {
+                                        text: rev.author + " • " + rev.date;
+                                        color: Theme.text-muted;
+                                        font-size: 10.5px;
+                                    }
+                                }
+
+                                VerticalLayout {
+                                    alignment: center;
+                                    ActionButton {
+                                        label: "Build";
+                                        variant: "secondary";
+                                        btn-height: 26px;
+                                        h-pad: 10px;
+                                        font-size: 11px;
+                                        clicked => { root.build_revision_requested(rev.sha); }
+                                        IconPlay { icon-size: 10px; icon-color: Theme.status-success; }
+                                    }
+                                }
+                            }
+
+                            rev-ta := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => {
+                                    root.selected_revision_idx = idx;
+                                    root.revision_selected(idx);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Parent Workspace Selectable Checklist Modal
+    if root.show_workspace_checklist: Rectangle {
+        x: 0;
+        y: 0;
+        width: 100%;
+        height: 100%;
+        background: #04070CD9;
+        z: 50;
+
+        TouchArea {
+            clicked => { root.dismiss_workspace_checklist(); }
+        }
+
+        VerticalLayout {
+            alignment: center;
+            HorizontalLayout {
+                alignment: center;
+
+                Rectangle {
+                    width: 680px;
+                    height: 500px;
+                    background: Theme.bg-card;
+                    border-radius: Theme.radius-lg;
+                    border-width: 1px;
+                    border-color: Theme.border-muted;
+
+                    TouchArea {}
+
+                    VerticalLayout {
+                        padding: 20px;
+                        spacing: 12px;
+
+                        HorizontalLayout {
+                            alignment: space-between;
+                            VerticalLayout {
+                                spacing: 3px;
+                                Text {
+                                    text: "Select Repositories to Track";
+                                    color: Theme.text-primary;
+                                    font-size: 16px;
+                                    font-weight: 700;
+                                }
+                                Text {
+                                    text: "Workspace folder: " + root.workspace_folder_path;
+                                    color: Theme.text-muted;
+                                    font-size: 11px;
+                                    overflow: elide;
+                                }
+                            }
+                            ActionButton {
+                                label: "Select Untracked";
+                                variant: "ghost";
+                                btn-height: 28px;
+                                clicked => { root.checklist_select_all_untracked(); }
+                            }
+                        }
+
+                        Rectangle { height: 1px; background: Theme.border-subtle; }
+
+                        ListView {
+                            vertical-stretch: 1;
+                            for cand[idx] in root.workspace_candidates: Rectangle {
+                                height: 54px;
+                                border-radius: Theme.radius-sm;
+                                background: cand.checked ? Theme.accent-primary-soft : (c-ta.has-hover ? Theme.bg-hover : Theme.bg-elevated);
+                                border-width: 1px;
+                                border-color: cand.checked ? Theme.accent-primary : Theme.border-subtle;
+
+                                HorizontalLayout {
+                                    padding-left: 12px;
+                                    padding-right: 12px;
+                                    spacing: 10px;
+
+                                    VerticalLayout {
+                                        alignment: center;
+                                        Rectangle {
+                                            width: 16px;
+                                            height: 16px;
+                                            border-radius: 4px;
+                                            background: cand.checked ? Theme.accent-primary : Theme.bg-input;
+                                            border-width: 1px;
+                                            border-color: cand.checked ? Theme.accent-primary : Theme.border-muted;
+                                            if cand.checked: VerticalLayout {
+                                                alignment: center;
+                                                HorizontalLayout {
+                                                    alignment: center;
+                                                    IconCheck { icon-size: 11px; icon-color: #FFFFFF; stroke-w: 2.5px; }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    VerticalLayout {
+                                        alignment: center;
+                                        horizontal-stretch: 1;
+                                        spacing: 2px;
+                                        HorizontalLayout {
+                                            spacing: 8px;
+                                            Text {
+                                                text: cand.name;
+                                                color: Theme.text-primary;
+                                                font-size: 12.5px;
+                                                font-weight: 700;
+                                            }
+                                            if cand.github_slug != "": Text {
+                                                text: cand.github_slug;
+                                                color: Theme.accent-cyan;
+                                                font-size: 11px;
+                                                vertical-alignment: center;
+                                            }
+                                        }
+                                        Text {
+                                            text: cand.repo_path;
+                                            color: Theme.text-muted;
+                                            font-size: 10.5px;
+                                            overflow: elide;
+                                        }
+                                    }
+
+                                    VerticalLayout {
+                                        alignment: center;
+                                        StatusBadge {
+                                            text: cand.already_tracked ? "Tracked" : cand.default_branch;
+                                            kind: cand.already_tracked ? "success" : "neutral";
+                                        }
+                                    }
+                                }
+
+                                c-ta := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { root.checklist_item_toggled(idx); }
+                                }
+                            }
+                        }
+
+                        Rectangle { height: 1px; background: Theme.border-subtle; }
+
+                        HorizontalLayout {
+                            alignment: space-between;
+                            Text {
+                                text: root.workspace_checklist_status;
+                                color: Theme.text-secondary;
+                                font-size: 11.5px;
+                                vertical-alignment: center;
+                            }
+                            HorizontalLayout {
+                                spacing: 10px;
+                                ActionButton {
+                                    label: "Cancel";
+                                    variant: "secondary";
+                                    clicked => { root.dismiss_workspace_checklist(); }
+                                }
+                                ActionButton {
+                                    label: "Track & Autoscan Selected";
+                                    variant: "primary";
+                                    clicked => { root.confirm_workspace_checklist(); }
                                 }
                             }
                         }

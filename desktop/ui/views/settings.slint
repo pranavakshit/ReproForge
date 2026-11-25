@@ -1,220 +1,93 @@
 import { Theme } from "../theme.slint";
-import { AboutSlint } from "std-widgets.slint";
+import { PanelCard } from "../components/panel_card.slint";
+import { StatusBadge } from "../components/status_badge.slint";
 
 export component SettingsView inherits Rectangle {
-    in property <bool> motion_enabled: true;
-    in property <string> active_backend: "Hardware (Skia/Femtovg)";
-    in property <bool> is_software_renderer: false;
-    in property <string> database_path: "d:/Repositories/ReproForge/data/reproforge.sqlite3";
+    in property <string> storage_db_path: "data/reproforge.db";
+    in property <string> storage_artifacts_path: "collected_artifacts";
+    in property <string> storage_workspaces_path: "build_workspaces";
+    in property <bool> docker_available: false;
+    in property <string> app_version: "0.2.0";
 
-    callback toggle_motion();
-    callback show_about_clicked();
-
-    background: Theme.bg_primary;
+    background: Theme.bg-canvas;
 
     VerticalLayout {
         padding: 20px;
         spacing: 16px;
-        alignment: start;
 
-        // View Header
-        HorizontalLayout {
-            alignment: space-between;
-            HorizontalLayout {
+        PanelCard {
+            title: "Storage & Local Persistence Paths";
+            subtitle: "Zero external services required; all project state resides inside workspace boundaries";
+
+            GridLayout {
                 spacing: 10px;
-                Text {
-                    text: "System Preferences & Architecture Configuration";
-                    font-size: 18px;
-                    font-weight: 700;
-                    color: Theme.text_primary;
-                    vertical-alignment: center;
+                Row {
+                    Text { text: "SQLite Ledger DB"; color: Theme.text-muted; font-size: 12px; width: 170px; }
+                    Text { text: root.storage_db_path; color: Theme.text-code; font-size: 12px; font-weight: 600; }
+                }
+                Row {
+                    Text { text: "Artifacts Store"; color: Theme.text-muted; font-size: 12px; }
+                    Text { text: root.storage_artifacts_path; color: Theme.text-code; font-size: 12px; font-weight: 600; }
+                }
+                Row {
+                    Text { text: "Build Workspaces"; color: Theme.text-muted; font-size: 12px; }
+                    Text { text: root.storage_workspaces_path; color: Theme.text-code; font-size: 12px; font-weight: 600; }
                 }
             }
         }
 
-        // Settings Sections Grid
-        HorizontalLayout {
-            spacing: 16px;
+        PanelCard {
+            title: "Execution Sandbox & Security Guardrails";
+            subtitle: "Safety policies enforced automatically during repository scanning & build execution";
 
-            // Column 1: UI & Graphics Configuration
-            Rectangle {
-                horizontal-stretch: 1;
-                background: Theme.bg_secondary;
-                border-radius: Theme.radius_md;
-                border-width: 1px;
-                border-color: Theme.border_subtle;
-
-                VerticalLayout {
-                    padding: 16px;
-                    spacing: 14px;
-
-                    Text {
-                        text: "GRAPHICS & INTERFACE";
-                        font-size: 11px;
-                        font-weight: 600;
-                        color: Theme.text_muted;
-                        letter-spacing: 0.5px;
-                    }
-
-                    // Motion Toggle
-                    Rectangle {
-                        background: Theme.bg_card;
-                        border-radius: Theme.radius_sm;
-                        padding: 12px;
-                        HorizontalLayout {
-                            alignment: space-between;
-                            VerticalLayout {
-                                spacing: 2px;
-                                Text { text: "OS Animation / Reduced Motion"; font-size: 12px; font-weight: 600; color: Theme.text_primary; }
-                                Text { text: root.motion_enabled ? "Animations currently active" : "Reduced motion active (shimmers static)"; font-size: 11px; color: Theme.text_dim; }
-                            }
-                            Rectangle {
-                                width: 80px; height: 28px; border-radius: Theme.radius_sm;
-                                background: root.motion_enabled ? Theme.status_exact_bg : Theme.bg_elevated;
-                                border-width: 1px;
-                                border-color: root.motion_enabled ? Theme.status_exact_border : Theme.border_light;
-                                TouchArea { clicked => { root.toggle_motion(); } }
-                                HorizontalLayout {
-                                    alignment: center;
-                                    Text {
-                                        text: root.motion_enabled ? "Enabled" : "Reduced";
-                                        font-size: 11px; font-weight: 600;
-                                        color: root.motion_enabled ? Theme.status_exact : Theme.text_muted;
-                                        vertical-alignment: center;
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // Active Renderer Backend
-                    Rectangle {
-                        background: Theme.bg_card;
-                        border-radius: Theme.radius_sm;
-                        padding: 12px;
-                        VerticalLayout {
-                            spacing: 6px;
-                            HorizontalLayout {
-                                alignment: space-between;
-                                Text { text: "Active Rendering Pipeline"; font-size: 12px; font-weight: 600; color: Theme.text_primary; }
-                                Rectangle {
-                                    height: 20px; border-radius: Theme.radius_sm;
-                                    background: root.is_software_renderer ? Theme.status_warn_bg : Theme.status_exact_bg;
-                                    HorizontalLayout {
-                                        padding-left: 6px; padding-right: 6px; alignment: center;
-                                        Text {
-                                            text: root.is_software_renderer ? "Software Fallback" : "Hardware Accelerated";
-                                            font-size: 10px; font-weight: 600;
-                                            color: root.is_software_renderer ? Theme.status_warn : Theme.status_exact;
-                                        }
-                                    }
-                                }
-                            }
-                            Text {
-                                text: "Backend: " + root.active_backend;
-                                font-size: 11px;
-                                color: Theme.accent_cyan;
-                            }
-                            Text {
-                                text: "To switch renderer at startup, run with SLINT_BACKEND=software or SLINT_BACKEND=femtovg.";
-                                font-size: 10px;
-                                color: Theme.text_dim;
-                            }
-                        }
-                    }
-
-                    // Theme Palette Notice
-                    Rectangle {
-                        background: Theme.bg_card;
-                        border-radius: Theme.radius_sm;
-                        padding: 12px;
-                        VerticalLayout {
-                            spacing: 4px;
-                            Text { text: "Theme Scheme"; font-size: 12px; font-weight: 600; color: Theme.text_primary; }
-                            Text { text: "ReproForge Midnight Dark (Accessible slate palette with KaTeX telemetry contrast)"; font-size: 11px; color: Theme.text_secondary; }
-                        }
-                    }
+            HorizontalLayout {
+                spacing: 10px;
+                StatusBadge {
+                    text: root.docker_available ? "Docker Isolation: READY" : "Docker Isolation: NOT DETECTED";
+                    kind: root.docker_available ? "success" : "warning";
+                }
+                StatusBadge {
+                    text: "GitHub Autoscan: READ-ONLY & STATIC";
+                    kind: "info";
+                }
+                StatusBadge {
+                    text: "Host Scripts: BLOCKED";
+                    kind: "success";
                 }
             }
 
-            // Column 2: Storage & Licensing
-            Rectangle {
-                horizontal-stretch: 1;
-                background: Theme.bg_secondary;
-                border-radius: Theme.radius_md;
-                border-width: 1px;
-                border-color: Theme.border_subtle;
-
-                VerticalLayout {
-                    padding: 16px;
-                    spacing: 14px;
-
-                    Text {
-                        text: "PERSISTENCE & LICENSING";
-                        font-size: 11px;
-                        font-weight: 600;
-                        color: Theme.text_muted;
-                        letter-spacing: 0.5px;
-                    }
-
-                    // Database Storage
-                    Rectangle {
-                        background: Theme.bg_card;
-                        border-radius: Theme.radius_sm;
-                        padding: 12px;
-                        VerticalLayout {
-                            spacing: 4px;
-                            Text { text: "Durable SQLite Database"; font-size: 12px; font-weight: 600; color: Theme.text_primary; }
-                            Text { text: root.database_path; font-size: 10px; color: Theme.text_secondary; overflow: elide; }
-                            Text { text: "Pragmas: journal_mode=WAL, busy_timeout=5000ms, foreign_keys=ON"; font-size: 10px; color: Theme.status_exact; }
-                        }
-                    }
-
-                    // Slint Attribution & License Widget
-                    Rectangle {
-                        background: Theme.bg_card;
-                        border-radius: Theme.radius_sm;
-                        padding: 12px;
-                        VerticalLayout {
-                            spacing: 8px;
-                            Text { text: "Slint Royalty-Free 2.0 Attribution"; font-size: 12px; font-weight: 600; color: Theme.text_primary; }
-                            Text {
-                                text: "ReproForge incorporates the Slint UI toolkit in compliance with the Slint Royalty-Free License 2.0 attribution clause.";
-                                font-size: 11px;
-                                color: Theme.text_secondary;
-                            }
-                            Rectangle {
-                                width: 140px; height: 28px; border-radius: Theme.radius_sm;
-                                background: Theme.bg_elevated;
-                                border-width: 1px;
-                                border-color: Theme.border_light;
-                                TouchArea { clicked => { root.show_about_clicked(); } }
-                                HorizontalLayout {
-                                    alignment: center;
-                                    Text {
-                                        text: "View AboutSlint Dialog";
-                                        font-size: 11px; font-weight: 600;
-                                        color: Theme.accent_cyan;
-                                        vertical-alignment: center;
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // Capstone Details
-                    Rectangle {
-                        background: Theme.bg_card;
-                        border-radius: Theme.radius_sm;
-                        padding: 12px;
-                        VerticalLayout {
-                            spacing: 4px;
-                            Text { text: "Academic Context"; font-size: 12px; font-weight: 600; color: Theme.text_primary; }
-                            Text { text: "University of Petroleum and Energy Studies (UPES)"; font-size: 11px; color: Theme.text_secondary; }
-                            Text { text: "Department of Computer Science & Engineering — DevOps Specialization"; font-size: 10px; color: Theme.text_dim; }
-                        }
-                    }
+            VerticalLayout {
+                spacing: 6px;
+                Text {
+                    text: "1. GitHub Autoscan checks remotes, refs, GitHub Actions workflows, and lockfiles without running repository scripts.";
+                    color: Theme.text-secondary;
+                    font-size: 11.5px;
+                    wrap: word-wrap;
                 }
+                Text {
+                    text: "2. Docker builds enforce --network=none, CPU/memory limits, and non-privileged execution whenever available.";
+                    color: Theme.text-secondary;
+                    font-size: 11.5px;
+                    wrap: word-wrap;
+                }
+                Text {
+                    text: "3. Host fallback builds export clean commits via git archive into isolated temporary workspaces with allowlisted env vars.";
+                    color: Theme.text-secondary;
+                    font-size: 11.5px;
+                    wrap: word-wrap;
+                }
+            }
+        }
+
+        PanelCard {
+            title: "Runtime Architecture";
+            subtitle: "Version " + root.app_version + " • Slint Native Frontend + Python Asyncio IPC Backend";
+
+            Text {
+                text: "Transport: Local JSON-RPC 2.0 over stdin/stdout (newline-delimited) • Rendering: Hardware FemtoVG or Software Fallback";
+                color: Theme.text-secondary;
+                font-size: 11.5px;
+                wrap: word-wrap;
             }
         }
     }
