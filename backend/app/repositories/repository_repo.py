@@ -61,11 +61,24 @@ class RepositoryRepository(BaseRepository[RepositoryModel]):
         project_id: Optional[str] = None,
         repo_type: str = "local",
         default_branch: str = "main",
+        upstream_github_url: Optional[str] = None,
+        github_slug: Optional[str] = None,
+        scan_metadata_json: Optional[dict] = None,
+        last_scanned_at: Optional[datetime] = None,
     ) -> RepositoryModel:
-        """Find existing repository or create a new record using canonical path/URL."""
+        """Find existing repository or create/update record using canonical path/URL."""
         canonical = self.canonicalize_repo_url(repo_url, repo_type=repo_type)
         existing = await self.get_by_url(canonical)
         if existing:
+            if upstream_github_url is not None:
+                existing.upstream_github_url = upstream_github_url
+            if github_slug is not None:
+                existing.github_slug = github_slug
+            if scan_metadata_json is not None:
+                existing.scan_metadata_json = scan_metadata_json
+            if last_scanned_at is not None:
+                existing.last_scanned_at = last_scanned_at
+            await self.session.flush()
             return existing
         new_repo = RepositoryModel(
             name=name,
@@ -73,6 +86,10 @@ class RepositoryRepository(BaseRepository[RepositoryModel]):
             project_id=project_id,
             repo_type=repo_type,
             default_branch=default_branch,
+            upstream_github_url=upstream_github_url,
+            github_slug=github_slug,
+            scan_metadata_json=scan_metadata_json or {},
+            last_scanned_at=last_scanned_at,
         )
         return await self.add(new_repo)
 

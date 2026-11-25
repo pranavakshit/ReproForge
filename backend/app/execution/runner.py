@@ -104,12 +104,20 @@ class LocalSandboxBackend(BaseBuildBackend):
         started_at = datetime.now(timezone.utc)
         start_time = time.monotonic()
 
-        # Build clean environment dictionary
-        clean_env = os.environ.copy()
+        # Construct sanitized allowlisted environment (do not leak arbitrary host secrets into build sandbox)
+        allowed_keys = {
+            "PATH", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "OS",
+            "TEMP", "TMP", "HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH",
+            "APPDATA", "LOCALAPPDATA", "LANG", "LC_ALL", "TZ",
+            "VIRTUAL_ENV", "PYTHONPATH", "PYTHONHOME", "CARGO_HOME", "RUSTUP_HOME",
+            "GOPATH", "GOROOT", "NPM_CONFIG_CACHE", "SOURCE_DATE_EPOCH", "PYTHONHASHSEED",
+            "DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH",
+        }
+        clean_env = {k: v for k, v in os.environ.items() if k.upper() in allowed_keys}
         if env_vars:
             clean_env.update(env_vars)
 
-        logger.info(f"[{build_id}] Starting local sandbox build: '{build_command}' in {workspace_source_dir}")
+        logger.info(f"[{build_id}] Starting local sandbox build (allowlisted host env): '{build_command}' in {workspace_source_dir}")
 
         status = BuildStatus.BUILDING
         exit_code = -1
@@ -121,6 +129,7 @@ class LocalSandboxBackend(BaseBuildBackend):
             header = (
                 f"=== ReproForge Build Log: {build_id} ===\n"
                 f"Timestamp: {started_at.isoformat()}\n"
+                f"Isolation: Host Sandbox (Env Allowlisted — not OS container isolated)\n"
                 f"Command: {build_command}\n"
                 f"Working Directory: {workspace_source_dir}\n"
                 f"=========================================\n\n"
@@ -215,12 +224,12 @@ class LocalSandboxBackend(BaseBuildBackend):
             duration_seconds=duration,
             log_file_path=str(log_file),
             error_message=error_msg,
-            metadata={"command": build_command},
+            metadata={"command": build_command, "isolation_tier": "host_sandbox_allowlist"},
         )
 
 
 class DockerBuildBackend(BaseBuildBackend):
-    """Executes container builds using Docker Engine / BuildKit with strict caching disabled."""
+    """Executes container builds using Docker Engine / BuildKit with strict caching & resource caps."""
 
     async def execute(
         self,
@@ -230,16 +239,19 @@ class DockerBuildBackend(BaseBuildBackend):
         env_vars: Optional[Dict[str, str]] = None,
         timeout_seconds: int = 1200,
         on_output_chunk: Optional[Callable[[str], None]] = None,
+        network_access: bool = False,
+        memory_limit: str = "2g",
+        cpu_limit: str = "2",
     ) -> BuildExecutionResult:
         docker_bin = shutil.which("docker")
         if not docker_bin:
             raise RuntimeError("Docker executable not found on system PATH.")
 
         image_tag = f"reproforge-{build_id}:target"
-        # Force --no-cache to ensure pure build reproduction from source
-        full_command = f"docker build --no-cache -t {image_tag} ."
+        net_flag = "" if network_access else " --network=none"
+        # Force --no-cache and explicit memory/CPU limits (Master Prompt §14)
+        full_command = f"docker build --no-cache --memory={memory_limit}{net_flag} -t {image_tag} ."
 
-        # Delegate execution to local sandbox running docker CLI
         sandbox = LocalSandboxBackend()
         result = await sandbox.execute(
             build_id=build_id,
@@ -251,4 +263,8 @@ class DockerBuildBackend(BaseBuildBackend):
         )
         result.backend_type = "docker"
         result.metadata["image_tag"] = image_tag
+        result.metadata["isolation_tier"] = "container_isolated"
+        result.metadata["network_disabled"] = not network_access
+        result.metadata["memory_limit"] = memory_limit
+        result.metadata["cpu_limit"] = cpu_limit
         return result

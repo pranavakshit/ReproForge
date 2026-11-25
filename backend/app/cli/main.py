@@ -14,6 +14,7 @@ from backend.app.schemas.entities import BuildStatus
 from backend.app.services.build_service import BuildService
 from backend.app.services.comparison_service import ComparisonService
 from backend.app.services.fingerprint_service import FingerprintService
+from backend.app.services.repository_service import RepositoryService
 
 console = Console()
 
@@ -268,6 +269,90 @@ def compare_command(artifact1: Path, artifact2: Path):
                 f"{r.proposed_action}{snippet}",
             )
         console.print(rem_table)
+
+
+@cli.group("repo")
+def repo_group():
+    """Register, scan, and inspect local or GitHub-linked repositories."""
+    pass
+
+
+@repo_group.command("add")
+@click.argument("target", type=str)
+@click.option("--name", default=None, help="Optional custom display name.")
+@click.option("--project", "project_name", default="default", help="Project group name.")
+@click.option("--online/--offline", default=True, help="Query public GitHub API metadata when online.")
+def repo_add_command(target: str, name: Optional[str], project_name: str, online: bool):
+    """Register a local Git repository and automatically scan linked GitHub upstream & CI readiness."""
+    repo_svc = RepositoryService()
+    target_path = Path(target)
+
+    if target_path.exists() and target_path.is_dir() and not (target_path / ".git").exists():
+        discovery = asyncio.run(repo_svc.discover_folder_candidates(target_path))
+        candidates = discovery.get("candidates", [])
+        if not candidates:
+            console.print(f"[yellow]No Git repositories found inside {target_path}.[/yellow]")
+            return
+        table = Table(title=f"Discovered Child Git Repositories in {target_path}", border_style="cyan")
+        table.add_column("#", style="bold")
+        table.add_column("Name", style="green")
+        table.add_column("Branch", style="yellow")
+        table.add_column("GitHub Remote", style="cyan")
+        table.add_column("Path", style="dim")
+        for i, c in enumerate(candidates, 1):
+            table.add_row(str(i), c["name"], c["default_branch"], c["github_slug"] or "-", c["repo_path"])
+        console.print(table)
+        sel = click.prompt("Enter numbers to add & autoscan (comma-separated, or 'all', or 'none')", default="all")
+        if sel.strip().lower() == "none":
+            return
+        if sel.strip().lower() == "all":
+            chosen = candidates
+        else:
+            idxs = {int(x.strip()) - 1 for x in sel.split(",") if x.strip().isdigit()}
+            chosen = [c for idx, c in enumerate(candidates) if idx in idxs]
+        added = asyncio.run(repo_svc.register_batch(chosen, project_name=project_name, fetch_online_metadata=online))
+        console.print(f"[bold green]Registered & scanned {len(added)} repository(ies).[/bold green]")
+        return
+
+    repo_name = name or (target_path.name if target_path.exists() else target.rstrip("/").split("/")[-1].replace(".git", ""))
+    repo_model = asyncio.run(
+        repo_svc.register_repository(
+            name=repo_name,
+            repo_url=target,
+            project_name=project_name,
+            autoscan=True,
+            fetch_online_metadata=online,
+        )
+    )
+    meta = repo_model.scan_metadata_json or {}
+    readiness = meta.get("readiness", {})
+    console.print(
+        Panel(
+            f"[bold]Repository:[/bold] {repo_model.name} ({repo_model.id})\n"
+            f"[bold]Path/URL:[/bold] {repo_model.repo_url}\n"
+            f"[bold]GitHub Upstream:[/bold] {repo_model.upstream_github_url or 'Local only (no GitHub remote)'}\n"
+            f"[bold]Detected Build Systems:[/bold] {', '.join(readiness.get('detected_systems', ['unknown']))}\n"
+            f"[bold]Readiness Status:[/bold] {readiness.get('readiness_status', 'unknown')}",
+            title="GitHub & Reproducibility Autoscan Complete",
+            border_style="green",
+        )
+    )
+
+
+@repo_group.command("scan")
+@click.argument("folder_path", type=click.Path(exists=True, file_okay=False, path_type=Path))
+def repo_scan_command(folder_path: Path):
+    """Discover all 1-level child Git repositories inside FOLDER_PATH and show GitHub upstream remotes."""
+    repo_svc = RepositoryService()
+    discovery = asyncio.run(repo_svc.discover_folder_candidates(folder_path))
+    table = Table(title=f"Folder Discovery: {discovery['folder']}", border_style="cyan")
+    table.add_column("Name", style="bold green")
+    table.add_column("Branch", style="yellow")
+    table.add_column("GitHub Slug", style="cyan")
+    table.add_column("Already Tracked", style="magenta")
+    for c in discovery.get("candidates", []):
+        table.add_row(c["name"], c["default_branch"], c["github_slug"] or "None", "Yes" if c["already_tracked"] else "No")
+    console.print(table)
 
 
 @cli.command("daemon")

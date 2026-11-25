@@ -1,11 +1,12 @@
 """Git repository ingestion and exact commit revision pinning."""
 
 import os
+import re
 import shutil
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, List, Optional, Tuple
 from backend.app.schemas.entities import SourceRevisionCreate
 from backend.app.core.logging import get_logger
 
@@ -141,10 +142,10 @@ class GitRepositoryManager:
             # Create tar archive from git
             self._run_git_cmd(["archive", "--format=tar", f"--output={archive_tar}", commit_sha], cwd=repo_path)
             
-            # Unpack tar safely using Python tarfile
+            # Unpack tar safely using Python tarfile data filter
             import tarfile
             with tarfile.open(archive_tar, "r") as tar:
-                tar.extractall(path=target_dir)
+                tar.extractall(path=target_dir, filter="data")
             
             # Remove temporary tar
             if archive_tar.exists():
@@ -156,3 +157,162 @@ class GitRepositoryManager:
             if archive_tar.exists():
                 archive_tar.unlink()
             raise GitRepositoryError(f"Failed to export clean revision {commit_sha}: {e}") from e
+
+    @staticmethod
+    def parse_github_remote_url(raw_url: str) -> Optional[Tuple[str, str]]:
+        """Normalize SSH/HTTPS GitHub remote URLs into (owner/repo, https_url) or None."""
+        cleaned = (raw_url or "").strip()
+        if not cleaned:
+            return None
+
+        patterns = [
+            r"^git@github\.com:(?P<owner>[A-Za-z0-9_.-]+)/(?P<repo>[A-Za-z0-9_.-]+?)(?:\.git)?/?$",
+            r"^ssh://git@github\.com/(?P<owner>[A-Za-z0-9_.-]+)/(?P<repo>[A-Za-z0-9_.-]+?)(?:\.git)?/?$",
+            r"^https?://(?:[^@/]+@)?github\.com/(?P<owner>[A-Za-z0-9_.-]+)/(?P<repo>[A-Za-z0-9_.-]+?)(?:\.git)?/?$",
+        ]
+        for pat in patterns:
+            m = re.match(pat, cleaned, flags=re.IGNORECASE)
+            if m:
+                slug = f"{m.group('owner')}/{m.group('repo')}"
+                return slug, f"https://github.com/{slug}"
+        return None
+
+    def get_remotes(self, repo_path: Path) -> Dict[str, str]:
+        """Return configured git remote fetch URLs keyed by remote name."""
+        try:
+            output = self._run_git_cmd(["remote", "-v"], cwd=repo_path)
+        except GitRepositoryError:
+            return {}
+
+        remotes: Dict[str, str] = {}
+        for line in output.splitlines():
+            parts = line.split()
+            if len(parts) >= 2 and ("(fetch)" in line or parts[0] not in remotes):
+                remotes[parts[0]] = parts[1]
+        return remotes
+
+    def get_active_branch(self, repo_path: Path) -> str:
+        """Return current branch name or fallback 'main'."""
+        try:
+            branch = self._run_git_cmd(["rev-parse", "--abbrev-ref", "HEAD"], cwd=repo_path)
+            if branch and branch != "HEAD":
+                return branch
+        except GitRepositoryError:
+            pass
+        return "main"
+
+    def inspect_remote_alignment(
+        self, repo_path: Path, remote_name: str = "origin", timeout: int = 4
+    ) -> Dict[str, Any]:
+        """Non-destructively probe remote HEAD via `git ls-remote` without modifying local tree."""
+        remotes = self.get_remotes(repo_path)
+        if remote_name not in remotes:
+            remote_name = next(iter(remotes), "")
+        if not remote_name:
+            return {"reachable": False, "status": "no_remote", "remote_head_sha": None}
+
+        try:
+            local_head = self.resolve_commit_sha(repo_path, "HEAD")
+        except GitRepositoryError:
+            local_head = None
+
+        try:
+            res = subprocess.run(
+                [self.git_binary, "ls-remote", remotes[remote_name], "HEAD", "refs/heads/*"],
+                cwd=str(repo_path),
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,
+            )
+            if res.returncode != 0:
+                return {
+                    "reachable": False,
+                    "status": "offline_or_auth_required",
+                    "local_head_sha": local_head,
+                    "remote_head_sha": None,
+                }
+
+            remote_head_sha = None
+            remote_branches: List[str] = []
+            for line in res.stdout.splitlines():
+                parts = line.split()
+                if len(parts) < 2:
+                    continue
+                sha, ref = parts[0], parts[1]
+                if ref == "HEAD":
+                    remote_head_sha = sha
+                elif ref.startswith("refs/heads/"):
+                    remote_branches.append(ref.replace("refs/heads/", "", 1))
+
+            aligned = bool(local_head and remote_head_sha and local_head == remote_head_sha)
+            return {
+                "reachable": True,
+                "status": "in_sync" if aligned else "diverged_from_upstream",
+                "remote_name": remote_name,
+                "local_head_sha": local_head,
+                "remote_head_sha": remote_head_sha,
+                "remote_branches": remote_branches[:20],
+            }
+        except Exception as exc:
+            return {
+                "reachable": False,
+                "status": f"probe_skipped: {exc}",
+                "local_head_sha": local_head,
+                "remote_head_sha": None,
+            }
+
+    def shallow_clone_github(self, github_url: str, dest_dir: Path) -> Path:
+        """Clone a remote GitHub repository safely with shallow depth and no script execution."""
+        parsed = self.parse_github_remote_url(github_url)
+        if not parsed:
+            raise GitRepositoryError(f"Unsupported GitHub URL format: {github_url}")
+        _, canonical_url = parsed
+        if (dest_dir / ".git").exists():
+            return dest_dir
+
+        dest_dir.parent.mkdir(parents=True, exist_ok=True)
+        res = subprocess.run(
+            [self.git_binary, "clone", "--depth", "50", canonical_url, str(dest_dir)],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        if res.returncode != 0:
+            raise GitRepositoryError(f"Git clone failed: {res.stderr.strip() or res.stdout.strip()}")
+        return dest_dir
+
+    def discover_git_repos_in_folder(self, folder_path: Path) -> List[Dict[str, Any]]:
+        """Discover a repository at folder_path or 1-level child Git repositories for checklist selection."""
+        resolved = folder_path.resolve()
+        if not resolved.exists() or not resolved.is_dir():
+            return []
+
+        candidates: List[Path] = []
+        if (resolved / ".git").exists():
+            candidates = [resolved]
+        else:
+            for child in sorted(resolved.iterdir(), key=lambda p: p.name.lower()):
+                if child.is_dir() and not child.name.startswith(".") and (child / ".git").exists():
+                    candidates.append(child)
+
+        discovered: List[Dict[str, Any]] = []
+        for repo_dir in candidates:
+            remotes = self.get_remotes(repo_dir)
+            gh_info = None
+            for _, r_url in remotes.items():
+                gh_info = self.parse_github_remote_url(r_url)
+                if gh_info:
+                    break
+            discovered.append({
+                "name": repo_dir.name,
+                "repo_path": str(repo_dir),
+                "default_branch": self.get_active_branch(repo_dir),
+                "github_slug": gh_info[0] if gh_info else "",
+                "upstream_github_url": gh_info[1] if gh_info else "",
+                "is_git_repo": True,
+            })
+        return discovered

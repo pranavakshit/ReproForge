@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.database.session import AsyncSessionLocal
 from backend.app.models.entities import (
+    BuildComparisonModel,
     BuildExecutionModel,
     ReproducibilityScoreModel,
     SourceRevisionModel,
@@ -92,6 +93,22 @@ class OverviewService:
                 if rev_sha_val:
                     rev_sha = rev_sha_val[:8]
 
+            # Resolve real verdict from reproducibility_scores linked to comparisons if available
+            verd_stmt = (
+                select(ReproducibilityScoreModel.verdict)
+                .join(
+                    BuildComparisonModel,
+                    BuildComparisonModel.id == ReproducibilityScoreModel.comparison_id,
+                )
+                .where(
+                    (BuildComparisonModel.build_id_1 == b.id)
+                    | (BuildComparisonModel.build_id_2 == b.id)
+                )
+                .limit(1)
+            )
+            verd_res = await session.execute(verd_stmt)
+            real_verdict = verd_res.scalar()
+
             duration_str = f"{b.duration_seconds:.1f}s" if b.duration_seconds else "-"
             recent_builds.append(
                 {
@@ -99,13 +116,14 @@ class OverviewService:
                     "commit_sha": rev_sha,
                     "backend": b.profile_name,
                     "status": b.status,
-                    "verdict": "verified" if b.status == "completed" else b.status,
+                    "verdict": real_verdict or ("completed_uncompared" if b.status == "completed" else b.status),
                     "duration": duration_str,
                 }
             )
 
-        # 4. Host telemetry
-        sys_info, tools_info = self.fingerprint_service.get_telemetry()
+        # 4. Host telemetry (cached toolchain probe keeps overview queries sub-20ms)
+        sys_info, tools_info = self.fingerprint_service.get_telemetry(use_cache=True)
+        docker_cli = tools_info.tools.get("docker_cli", {}).get("version") or "Not detected on PATH"
         telemetry = {
             "os_name": sys_info.os_name,
             "os_release": sys_info.os_release,
@@ -114,6 +132,8 @@ class OverviewService:
             "ram_gb": round(sys_info.total_ram_bytes / (1024**3), 2),
             "hostname_masked": sys_info.hostname_masked,
             "detected_toolchains": list(tools_info.tools.keys()),
+            "docker_cli_version": docker_cli,
+            "database_path": "data/reproforge.db",
         }
 
         return {

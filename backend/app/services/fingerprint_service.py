@@ -24,11 +24,15 @@ class FingerprintService:
     ):
         self._session = session
         self.engine = engine or fingerprinter
+        self._cached_telemetry: Optional[Tuple[SystemInfo, ToolchainInfo]] = None
 
-    def get_telemetry(self) -> Tuple[SystemInfo, ToolchainInfo]:
-        """Capture host system telemetry and detected build toolchains."""
+    def get_telemetry(self, use_cache: bool = False) -> Tuple[SystemInfo, ToolchainInfo]:
+        """Capture host system telemetry and detected build toolchains (optionally cached)."""
+        if use_cache and self._cached_telemetry is not None:
+            return self._cached_telemetry
         sys_info = self.engine.capture_system_info()
         tools = self.engine.capture_toolchain_info()
+        self._cached_telemetry = (sys_info, tools)
         return sys_info, tools
 
     def capture_fingerprint(self) -> EnvironmentFingerprintCreate:

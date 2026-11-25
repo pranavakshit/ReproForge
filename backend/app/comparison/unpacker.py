@@ -50,7 +50,15 @@ class ArchiveUnpacker:
 
     @classmethod
     def _safe_rel_path(cls, path_str: str) -> str:
-        """Normalize relative path and protect against directory traversal attacks."""
+        """Normalize relative path and protect against absolute, drive, and traversal attacks."""
+        if "\x00" in path_str:
+            raise ValueError("Null byte detected in archive entry path")
+        drive, _ = os.path.splitdrive(path_str)
+        if drive or Path(path_str).is_absolute():
+            # Allow POSIX tar entries that start with single leading slash only after safety check,
+            # but reject Windows drive paths like C:\foo
+            if drive or path_str.startswith("//") or path_str.startswith("\\\\"):
+                raise ValueError(f"Absolute/drive path detected in archive entry: {path_str}")
         norm = os.path.normpath(path_str).replace("\\", "/").lstrip("/")
         if norm.startswith("../") or norm == "..":
             raise ValueError(f"Path traversal detected in archive entry: {path_str}")

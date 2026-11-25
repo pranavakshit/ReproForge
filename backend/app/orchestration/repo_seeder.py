@@ -7,6 +7,7 @@ from typing import Dict, List, Any
 
 from backend.app.database.session import AsyncSessionLocal
 from backend.app.orchestration.git import GitRepositoryManager
+from backend.app.orchestration.github_scanner import GitHubAutoScanner
 from backend.app.repositories.repository_repo import ProjectRepository, RepositoryRepository
 
 logger = logging.getLogger(__name__)
@@ -51,8 +52,9 @@ REAL_REPOSITORIES = [
 
 
 async def seed_real_repositories(limit_commits_per_repo: int = 30) -> List[Dict[str, Any]]:
-    """Register all defined real local repositories and ingest their actual Git commits."""
+    """Register all defined real local repositories, ingest actual Git commits, and run GitHub autoscan."""
     git_mgr = GitRepositoryManager()
+    scanner = GitHubAutoScanner(git_manager=git_mgr)
     results = []
 
     async with AsyncSessionLocal() as session:
@@ -66,13 +68,19 @@ async def seed_real_repositories(limit_commits_per_repo: int = 30) -> List[Dict[
                     logger.warning("Repository path does not exist: %s", repo_path)
                     continue
 
+                scan_meta = await scanner.scan_local_repository(repo_path, fetch_online_metadata=False)
+                from datetime import datetime, timezone
                 proj = await proj_repo.get_or_create(spec["project_name"])
                 repo_model = await repo_repo.get_or_create(
                     name=spec["name"],
                     repo_url=str(repo_path.resolve()),
                     project_id=proj.id,
                     repo_type=spec["repo_type"],
-                    default_branch=spec["default_branch"],
+                    default_branch=scan_meta.get("active_branch") or spec["default_branch"],
+                    upstream_github_url=scan_meta.get("upstream_github_url"),
+                    github_slug=scan_meta.get("github_slug"),
+                    scan_metadata_json=scan_meta,
+                    last_scanned_at=datetime.now(timezone.utc).replace(tzinfo=None),
                 )
 
                 # Ingest actual Git commits from the repository

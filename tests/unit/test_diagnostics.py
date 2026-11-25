@@ -14,8 +14,10 @@ from backend.app.diagnostics.remediation import (
     RemediationRiskLevel,
 )
 from backend.app.diagnostics.rules import (
+    RuleBaseImageVariation,
     RuleDependencyVariation,
     RuleEnvironmentLeakage,
+    RuleExternalInputVariation,
     RuleFilesystemOrdering,
     RuleGeneratedContent,
     RuleMetadataVariation,
@@ -620,3 +622,103 @@ def test_remediation_risk_classification():
     assert len(recs_unk) > 0
     assert recs_unk[0].risk_level == RemediationRiskLevel.LEVEL_3_HIGH
     assert recs_unk[0].approval_required is True
+
+
+def test_rule_base_image_variation_positive_and_negative():
+    """Verify §26.5 RuleBaseImageVariation detects unpinned base tags and clears digest-pinned Dockerfiles."""
+    summary_oci = ArtifactComparisonSummary(
+        artifact_1_path="image1.tar",
+        artifact_2_path="image2.tar",
+        strict_sha_1="1" * 64,
+        strict_sha_2="2" * 64,
+        normalized_sha_1="1" * 64,
+        normalized_sha_2="2" * 64,
+        exact_match=False,
+        normalized_match=False,
+        content_agreement_ratio=0.4,
+        metadata_agreement_ratio=1.0,
+        total_files_evaluated=1,
+        added_files_count=0,
+        removed_files_count=0,
+        modified_content_count=1,
+        modified_metadata_count=0,
+        findings=[
+            DiffFindingItem(
+                file_path="layer0.tar",
+                diff_type="MODIFIED_CONTENT",
+                strict_match=False,
+                normalized_match=False,
+                size_delta_bytes=120,
+                details={"docker_oci_image": True},
+            )
+        ],
+    )
+    unpinned_ctx = DiagnosticContext(
+        comparison_summary=summary_oci,
+        build_system=DetectedBuildSystem(
+            system_type="docker",
+            primary_config_file="Dockerfile",
+            build_files_found=["Dockerfile"],
+            has_lockfile=False,
+            base_images=["python:3.12-slim"],
+            suggested_build_command="docker build .",
+        ),
+    )
+    rule = RuleBaseImageVariation()
+    pos_res = rule.evaluate(unpinned_ctx)
+    assert pos_res is not None
+    assert pos_res.category == DiagnosticCategory.BASE_IMAGE_VARIATION
+    assert pos_res.confidence == ConfidenceLevel.MEDIUM
+
+    pinned_ctx = DiagnosticContext(
+        comparison_summary=summary_oci,
+        build_system=DetectedBuildSystem(
+            system_type="docker",
+            primary_config_file="Dockerfile",
+            build_files_found=["Dockerfile"],
+            has_lockfile=True,
+            base_images=["python:3.12-slim@sha256:" + "a" * 64],
+            suggested_build_command="docker build .",
+        ),
+    )
+    assert rule.evaluate(pinned_ctx) is None
+
+
+def test_rule_external_input_variation_positive_and_negative():
+    """Verify §26.5 RuleExternalInputVariation flags external downloads in build logs and skips clean offline logs."""
+    summary = ArtifactComparisonSummary(
+        artifact_1_path="out1.tar",
+        artifact_2_path="out2.tar",
+        strict_sha_1="1" * 64,
+        strict_sha_2="2" * 64,
+        normalized_sha_1="1" * 64,
+        normalized_sha_2="2" * 64,
+        exact_match=False,
+        normalized_match=False,
+        content_agreement_ratio=0.0,
+        metadata_agreement_ratio=1.0,
+        total_files_evaluated=1,
+        added_files_count=0,
+        removed_files_count=0,
+        modified_content_count=1,
+        modified_metadata_count=0,
+        findings=[],
+    )
+    rule = RuleExternalInputVariation()
+
+    net_ctx = DiagnosticContext(
+        comparison_summary=summary,
+        build_1_log_text="Step 2: curl -fsSL https://example.com/assets.json -o assets.json",
+        build_2_log_text="Step 2: curl -fsSL https://example.com/assets.json -o assets.json",
+    )
+    res = rule.evaluate(net_ctx)
+    assert res is not None
+    assert res.category == DiagnosticCategory.EXTERNAL_INPUT_VARIATION
+
+    clean_ctx = DiagnosticContext(
+        comparison_summary=summary,
+        build_1_log_text="Compiling local sources offline...",
+        build_2_log_text="Compiling local sources offline...",
+    )
+    assert rule.evaluate(clean_ctx) is None
+

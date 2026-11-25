@@ -96,45 +96,35 @@ class EnvironmentFingerprintEngine:
         return None
 
     def capture_toolchain_info(self) -> ToolchainInfo:
-        """Probe installed compiler, interpreter, and build toolchain versions."""
-        tools: Dict[str, Dict[str, Any]] = {}
+        """Probe installed compiler, interpreter, and build toolchain versions concurrently."""
+        from concurrent.futures import ThreadPoolExecutor
 
-        # 1. Python runtime
-        tools["python"] = {
-            "version": platform.python_version(),
-            "compiler": platform.python_compiler(),
-            "implementation": platform.python_implementation(),
-            "executable": sys.executable,
+        tools: Dict[str, Dict[str, Any]] = {
+            "python": {
+                "version": platform.python_version(),
+                "compiler": platform.python_compiler(),
+                "implementation": platform.python_implementation(),
+                "executable": sys.executable,
+            }
         }
 
-        # 2. Git
-        git_ver = self._probe_command_version(["git", "--version"])
-        if git_ver:
-            tools["git"] = {"version": git_ver}
+        probe_cmds = {
+            "git": ["git", "--version"],
+            "docker_cli": ["docker", "--version"],
+            "gcc": ["gcc", "--version"],
+            "clang": ["clang", "--version"],
+            "node": ["node", "--version"],
+            "make": ["make", "--version"],
+            "cargo": ["cargo", "--version"],
+            "go": ["go", "version"],
+        }
 
-        # 3. Docker CLI
-        docker_ver = self._probe_command_version(["docker", "--version"])
-        if docker_ver:
-            tools["docker_cli"] = {"version": docker_ver}
-
-        # 4. GCC / Clang
-        gcc_ver = self._probe_command_version(["gcc", "--version"])
-        if gcc_ver:
-            tools["gcc"] = {"version": gcc_ver}
-        else:
-            clang_ver = self._probe_command_version(["clang", "--version"])
-            if clang_ver:
-                tools["clang"] = {"version": clang_ver}
-
-        # 5. Node.js
-        node_ver = self._probe_command_version(["node", "--version"])
-        if node_ver:
-            tools["node"] = {"version": node_ver}
-
-        # 6. Make
-        make_ver = self._probe_command_version(["make", "--version"])
-        if make_ver:
-            tools["make"] = {"version": make_ver}
+        with ThreadPoolExecutor(max_workers=len(probe_cmds)) as pool:
+            futures = {name: pool.submit(self._probe_command_version, cmd) for name, cmd in probe_cmds.items()}
+            for name, fut in futures.items():
+                ver = fut.result()
+                if ver:
+                    tools[name] = {"version": ver}
 
         return ToolchainInfo(tools=tools)
 

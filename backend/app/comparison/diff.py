@@ -1,13 +1,17 @@
 """Structural differential engine comparing unpacked artifact trees."""
 
+import difflib
 from pathlib import Path
-from typing import Dict, List, Optional
+import tarfile
+import tempfile
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 from backend.app.comparison.hasher import ArtifactHasher
+from backend.app.comparison.oci import OCIImageInspector
 from backend.app.comparison.unpacker import ArchiveUnpacker, ArtifactEntry, ArtifactTree
 from backend.app.core.logging import get_logger
-from backend.app.normalization.normalizer import ArtifactNormalizer
+from backend.app.normalization.normalizer import ArtifactNormalizer, NormalizationRuleRecord
 from backend.app.schemas.entities import DiffFindingItem
 
 logger = get_logger("reproforge.comparison.diff")
@@ -32,6 +36,9 @@ class ArtifactComparisonSummary(BaseModel):
     modified_content_count: int
     modified_metadata_count: int
     findings: List[DiffFindingItem] = Field(default_factory=list)
+    normalization_rules_1: List[NormalizationRuleRecord] = Field(default_factory=list)
+    normalization_rules_2: List[NormalizationRuleRecord] = Field(default_factory=list)
+    oci_summary: Optional[Dict[str, Any]] = None
 
 
 class StructuralDiffEngine:
@@ -171,30 +178,96 @@ class StructuralDiffEngine:
             findings=findings,
         )
 
+    @staticmethod
+    def _extract_text_diff_snippet(file1: Path, file2: Path, max_bytes: int = 128 * 1024, max_chars: int = 2000) -> Optional[str]:
+        """Extract bounded UTF-8 unified diff snippet for small modified text/config files."""
+        try:
+            if not (file1.is_file() and file2.is_file()):
+                return None
+            if file1.stat().st_size > max_bytes or file2.stat().st_size > max_bytes:
+                return None
+            raw1 = file1.read_bytes()
+            raw2 = file2.read_bytes()
+            if b"\x00" in raw1 or b"\x00" in raw2:
+                return None
+            lines1 = raw1.decode("utf-8").splitlines(keepends=True)
+            lines2 = raw2.decode("utf-8").splitlines(keepends=True)
+            diff_text = "".join(
+                difflib.unified_diff(lines1, lines2, fromfile=file1.name, tofile=file2.name, n=1)
+            )
+            return diff_text[:max_chars] if diff_text else None
+        except Exception:
+            return None
+
+    @staticmethod
+    def _is_oci_tarball(artifact_path: Path) -> bool:
+        """Return True if artifact is a Docker/OCI image tarball containing manifest.json."""
+        name = artifact_path.name.lower()
+        if not artifact_path.is_file() or not name.endswith((".tar", ".tar.gz", ".tgz")):
+            return False
+        try:
+            with tarfile.open(artifact_path, "r:*") as tf:
+                names = set(tf.getnames())
+                return "manifest.json" in names
+        except Exception:
+            return False
+
     def compare_artifacts(self, path1: Path, path2: Path, work_dir: Path) -> ArtifactComparisonSummary:
-        """End-to-end comparison: hashes, normalizes, unpacks, and compares two artifacts."""
+        """End-to-end comparison inside an isolated ephemeral temp subdir: hashes, normalizes, unpacks, & compares."""
         work_dir.mkdir(parents=True, exist_ok=True)
-        unpack_1 = work_dir / "unpack_1"
-        unpack_2 = work_dir / "unpack_2"
-        norm_dir = work_dir / "normalized"
+        with tempfile.TemporaryDirectory(dir=work_dir, prefix="cmp_run_") as run_tmp:
+            run_root = Path(run_tmp)
+            unpack_1 = run_root / "unpack_1"
+            unpack_2 = run_root / "unpack_2"
+            norm_dir = run_root / "normalized"
 
-        # 1. Strict Hashes
-        sha1 = ArtifactHasher.compute_sha256(path1)
-        sha2 = ArtifactHasher.compute_sha256(path2)
+            # 1. Strict Hashes
+            sha1 = ArtifactHasher.compute_sha256(path1)
+            sha2 = ArtifactHasher.compute_sha256(path2)
 
-        # 2. Normalized Hashes
-        norm_res1 = self.normalizer.normalize(path1, norm_dir / "art1")
-        norm_res2 = self.normalizer.normalize(path2, norm_dir / "art2")
+            # 2. Normalized Hashes + Audit Rule Records
+            norm_res1 = self.normalizer.normalize(path1, norm_dir / "art1")
+            norm_res2 = self.normalizer.normalize(path2, norm_dir / "art2")
 
-        # 3. Unpack Trees
-        tree1 = ArchiveUnpacker.unpack(path1, unpack_1)
-        tree2 = ArchiveUnpacker.unpack(path2, unpack_2)
+            # 3. Unpack Trees
+            tree1 = ArchiveUnpacker.unpack(path1, unpack_1)
+            tree2 = ArchiveUnpacker.unpack(path2, unpack_2)
 
-        return self.compare_trees(
-            tree1=tree1,
-            tree2=tree2,
-            strict_sha1=sha1,
-            strict_sha2=sha2,
-            norm_sha1=norm_res1.normalized_sha256,
-            norm_sha2=norm_res2.normalized_sha256,
-        )
+            summary = self.compare_trees(
+                tree1=tree1,
+                tree2=tree2,
+                strict_sha1=sha1,
+                strict_sha2=sha2,
+                norm_sha1=norm_res1.normalized_sha256,
+                norm_sha2=norm_res2.normalized_sha256,
+            )
+            summary.normalization_rules_1 = norm_res1.rule_records
+            summary.normalization_rules_2 = norm_res2.rule_records
+
+            # 4. Attach bounded text diff snippets to MODIFIED_CONTENT findings
+            for f in summary.findings:
+                if f.diff_type == "MODIFIED_CONTENT":
+                    snippet = self._extract_text_diff_snippet(unpack_1 / f.file_path, unpack_2 / f.file_path)
+                    if snippet:
+                        f.details["diff_snippet"] = snippet
+
+            # 5. Deep OCI/Docker container inspection if both are OCI tarballs
+            if self._is_oci_tarball(path1) and self._is_oci_tarball(path2):
+                try:
+                    oci1 = OCIImageInspector.inspect(path1, run_root / "oci1", unpack_layers=False)
+                    oci2 = OCIImageInspector.inspect(path2, run_root / "oci2", unpack_layers=False)
+                    layer_shas_1 = [l.layer_tar_sha256 for l in oci1.layers]
+                    layer_shas_2 = [l.layer_tar_sha256 for l in oci2.layers]
+                    summary.oci_summary = {
+                        "total_layers_1": oci1.total_layers,
+                        "total_layers_2": oci2.total_layers,
+                        "arch_1": oci1.architecture,
+                        "arch_2": oci2.architecture,
+                        "layers_match": layer_shas_1 == layer_shas_2,
+                    }
+                    for f in summary.findings:
+                        f.details["docker_oci_image"] = True
+                except Exception as exc:
+                    logger.debug(f"OCI deep inspection skipped: {exc}")
+
+            return summary

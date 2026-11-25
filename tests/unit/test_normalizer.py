@@ -90,3 +90,22 @@ def test_zip_normalization_timestamps(tmp_path: Path):
     res2 = normalizer.normalize_zip(zip2, tmp_path / "norm_app2.zip")
 
     assert res1.normalized_sha256 == res2.normalized_sha256
+    assert len(res1.rule_records) == 3
+    assert all(rec.version == "1.0.0" and not rec.affects_runtime_semantics for rec in res1.rule_records)
+
+
+def test_meaningful_content_diff_remains_detectable_after_normalization(tmp_path: Path):
+    """Master Prompt §23.6: meaningful payload differences must never be normalized away."""
+    zip1 = tmp_path / "semantic_a.zip"
+    zip2 = tmp_path / "semantic_b.zip"
+
+    with zipfile.ZipFile(zip1, "w") as zf1:
+        zf1.writestr(zipfile.ZipInfo(filename="app.py", date_time=(2026, 1, 1, 0, 0, 0)), "return 42\n")
+    with zipfile.ZipFile(zip2, "w") as zf2:
+        zf2.writestr(zipfile.ZipInfo(filename="app.py", date_time=(2026, 1, 1, 0, 0, 0)), "return 99\n")
+
+    normalizer = ArtifactNormalizer(epoch_timestamp=1735689600)
+    res1 = normalizer.normalize_zip(zip1, tmp_path / "norm_sem1.zip")
+    res2 = normalizer.normalize_zip(zip2, tmp_path / "norm_sem2.zip")
+
+    assert res1.normalized_sha256 != res2.normalized_sha256

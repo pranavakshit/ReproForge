@@ -111,6 +111,9 @@ class RepositoryCreate(BaseModel):
     repo_url: str
     repo_type: RepositoryType = RepositoryType.LOCAL
     default_branch: str = "main"
+    upstream_github_url: Optional[str] = None
+    github_slug: Optional[str] = None
+    scan_metadata_json: Dict[str, Any] = Field(default_factory=dict)
 
 
 class RepositoryRead(BaseModel):
@@ -119,6 +122,10 @@ class RepositoryRead(BaseModel):
     repo_url: str
     repo_type: RepositoryType
     default_branch: str
+    upstream_github_url: Optional[str] = None
+    github_slug: Optional[str] = None
+    scan_metadata_json: Dict[str, Any] = Field(default_factory=dict)
+    last_scanned_at: Optional[datetime] = None
     created_at: datetime
     model_config = ConfigDict(from_attributes=True)
 

@@ -1,7 +1,7 @@
 """Service for generating, querying, and exporting the Build Drift Causality Graph."""
 
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -219,10 +219,10 @@ class CausalityGraphService:
         for idx, f in enumerate(findings):
             rule_node_id = f"rule-{f.category.lower().replace(' ', '_')}-{idx}"
             epistemic = "INFERRED"
-            evidence_str = str(f.evidence_trail)
-            if "EXPERIMENTALLY_VALIDATED" in evidence_str:
+            evidence_str = str(f.evidence_trail).lower()
+            if "experimentally_validated" in evidence_str:
                 epistemic = "EXPERIMENTALLY_VALIDATED"
-            elif f.confidence == "HIGH":
+            elif f.confidence.lower() == "high":
                 epistemic = "INFERRED"
             else:
                 epistemic = "HYPOTHESIS"
@@ -263,7 +263,7 @@ class CausalityGraphService:
         graph = CausalityGraph(
             graph_id=f"graph-{comp.id[:8]}",
             comparison_id=comp.id,
-            created_at=datetime.utcnow().isoformat(),
+            created_at=datetime.now(timezone.utc).isoformat(),
             nodes=nodes,
             edges=edges,
         )

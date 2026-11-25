@@ -17,7 +17,9 @@ from backend.app.ipc.protocol import (
     JsonRpcResponse,
 )
 from backend.app.models.entities import (
+    ArtifactItemModel,
     BuildComparisonModel,
+    DiagnosticFindingModel,
     DiffFindingModel,
     ReproducibilityScoreModel,
     SourceRevisionModel,
@@ -80,10 +82,14 @@ class RequestDispatcher:
             "overview.get_metrics": self._handle_overview_get_metrics,
             "build.list": self._handle_build_list,
             "build.get_status": self._handle_build_get_status,
+            "build.get_details": self._handle_build_get_details,
             "build.trigger": self._handle_build_trigger,
             "build.cancel": self._handle_build_cancel,
             "repository.list": self._handle_repository_list,
             "repository.register": self._handle_repository_register,
+            "repository.scan_folder": self._handle_repository_scan_folder,
+            "repository.register_batch": self._handle_repository_register_batch,
+            "repository.autoscan": self._handle_repository_autoscan,
             "repository.get_revisions": self._handle_repository_get_revisions,
             "comparison.get_latest": self._handle_comparison_get_latest,
             "comparison.list": self._handle_comparison_list,
@@ -224,6 +230,31 @@ class RequestDispatcher:
             raise ValueError(f"Build '{build_id}' not found")
         return _model_to_dict(b)
 
+    async def _handle_build_get_details(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Return persisted artifacts (real SHA-256 digests) and full execution log for a build."""
+        build_id = params.get("build_id")
+        if not build_id:
+            raise ValueError("Parameter 'build_id' is required")
+        b = await self.build_service.get_build(build_id)
+        if not b:
+            raise ValueError(f"Build '{build_id}' not found")
+
+        data = _model_to_dict(b)
+        async with AsyncSessionLocal() as session:
+            art_stmt = select(ArtifactItemModel).where(ArtifactItemModel.build_execution_id == build_id)
+            artifacts = (await session.execute(art_stmt)).scalars().all()
+            data["artifacts"] = [_model_to_dict(a) for a in artifacts]
+            data["primary_sha256"] = artifacts[0].strict_sha256 if artifacts else ""
+
+        log_text = ""
+        if b.log_file_path and Path(b.log_file_path).is_file():
+            try:
+                log_text = Path(b.log_file_path).read_text(encoding="utf-8", errors="replace")[-30_000:]
+            except Exception:
+                log_text = ""
+        data["log_text"] = log_text
+        return data
+
     async def _handle_build_cancel(self, params: Dict[str, Any]) -> Dict[str, Any]:
         build_id = params.get("build_id")
         if not build_id:
@@ -253,6 +284,13 @@ class RequestDispatcher:
                 cnt_res = await session.execute(cnt_stmt)
                 r_dict["revisions_count"] = cnt_res.scalar() or 0
 
+                scan_meta = r_dict.get("scan_metadata_json") or {}
+                readiness = scan_meta.get("readiness", {}) if isinstance(scan_meta, dict) else {}
+                detected = readiness.get("detected_systems") or []
+                r_dict["build_system"] = ", ".join(detected[:3]) if detected else "unknown"
+                r_dict["readiness_status"] = readiness.get("readiness_status", "unscanned")
+                r_dict["readiness_warnings"] = readiness.get("readiness_warnings", [])
+
         return {
             "total_count": len(repo_dicts),
             "repositories": repo_dicts,
@@ -266,14 +304,46 @@ class RequestDispatcher:
         project_name = params.get("project_name", "default")
         default_branch = params.get("default_branch", "main")
         repo_type = params.get("repo_type", "local")
+        fetch_online = bool(params.get("fetch_online_metadata", False))
 
-        repo = await self.repository_service.register_repository(
-            name=name,
-            repo_url=repo_url,
+        kwargs: Dict[str, Any] = {
+            "name": name,
+            "repo_url": repo_url,
+            "project_name": project_name,
+            "repo_type": repo_type,
+            "default_branch": default_branch,
+        }
+        if fetch_online:
+            kwargs["fetch_online_metadata"] = True
+
+        repo = await self.repository_service.register_repository(**kwargs)
+        return _model_to_dict(repo)
+
+    async def _handle_repository_scan_folder(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        folder_path = params.get("folder_path")
+        if not folder_path:
+            raise ValueError("Parameter 'folder_path' is required")
+        return await self.repository_service.discover_folder_candidates(Path(folder_path))
+
+    async def _handle_repository_register_batch(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        items = params.get("items") or []
+        project_name = params.get("project_name", "Workspace Imports")
+        fetch_online = bool(params.get("fetch_online_metadata", False))
+        repos = await self.repository_service.register_batch(
+            items=items,
             project_name=project_name,
-            repo_type=repo_type,
-            default_branch=default_branch,
+            fetch_online_metadata=fetch_online,
         )
+        return {"registered_count": len(repos), "repositories": [_model_to_dict(r) for r in repos]}
+
+    async def _handle_repository_autoscan(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        repository_id = params.get("repository_id")
+        if not repository_id:
+            raise ValueError("Parameter 'repository_id' is required")
+        fetch_online = bool(params.get("fetch_online_metadata", True))
+        repo = await self.repository_service.autoscan_repository(repository_id, fetch_online_metadata=fetch_online)
+        if not repo:
+            raise ValueError(f"Repository '{repository_id}' not found")
         return _model_to_dict(repo)
 
     async def _handle_repository_get_revisions(self, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -328,12 +398,34 @@ class RequestDispatcher:
                     "detail": detail_str,
                 })
 
+            diag_stmt = select(DiagnosticFindingModel).where(DiagnosticFindingModel.comparison_id == comp.id)
+            diag_res = await session.execute(diag_stmt)
+            diags = diag_res.scalars().all()
+
             return {
+                "id": comp.id,
                 "target_a": f"Build {comp.build_id_1[:12]}",
                 "target_b": f"Build {comp.build_id_2[:12]}",
                 "primary_verdict": verdict,
                 "cri_score": cri,
+                "content_agreement_ratio": f"{score.content_agreement_ratio:.2f}" if score else "1.00",
+                "metadata_agreement_ratio": f"{score.metadata_agreement_ratio:.2f}" if score else "1.00",
+                "environment_consistency_score": f"{score.environment_consistency_score:.2f}" if score else "1.00",
                 "diff_entries": entries,
+                "diagnostic_findings": [
+                    {
+                        "category": dg.category,
+                        "confidence": dg.confidence,
+                        "rule_id": f"RULE-{dg.category.upper().replace(' ', '_')}",
+                        "message": dg.root_cause_summary,
+                        "epistemic_status": (
+                            "EXPERIMENTALLY_VALIDATED"
+                            if "experimentally_validated" in str(dg.evidence_trail).lower()
+                            else ("INFERRED" if dg.confidence.lower() == "high" else "HYPOTHESIS")
+                        ),
+                    }
+                    for dg in diags
+                ],
             }
 
     async def _handle_comparison_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -386,12 +478,26 @@ class RequestDispatcher:
                 "build_id_2": comp.build_id_2,
                 "exact_match": comp.exact_match,
                 "normalized_match": comp.normalized_match,
-                "content_agreement_ratio": comp.content_agreement_ratio,
-                "metadata_agreement_ratio": comp.metadata_agreement_ratio,
+                "content_agreement_ratio": score.content_agreement_ratio if score else 1.0,
+                "metadata_agreement_ratio": score.metadata_agreement_ratio if score else 1.0,
+                "environment_consistency_score": score.environment_consistency_score if score else 1.0,
                 "verdict": score.verdict if score else "normalized_reproducible",
                 "cri": f"{score.composite_reproducibility_index:.2f}" if (score and score.composite_reproducibility_index is not None) else "0.88",
                 "diff_entries": [{"path": d.file_path, "change_type": d.diff_type, "detail": (d.details.get("message") if isinstance(d.details, dict) else "") or f"Diff in {d.file_path}"} for d in diffs],
-                "diagnostic_findings": [{"category": dg.category, "confidence": dg.confidence, "rule_id": f"RULE-{dg.category.upper().replace(' ', '_')}", "message": dg.root_cause_summary, "epistemic_status": "EXPERIMENTALLY_VALIDATED" if "EXPERIMENTALLY_VALIDATED" in str(dg.evidence_trail) else ("INFERRED" if dg.confidence == "HIGH" else "HYPOTHESIS")} for dg in diags],
+                "diagnostic_findings": [
+                    {
+                        "category": dg.category,
+                        "confidence": dg.confidence,
+                        "rule_id": f"RULE-{dg.category.upper().replace(' ', '_')}",
+                        "message": dg.root_cause_summary,
+                        "epistemic_status": (
+                            "EXPERIMENTALLY_VALIDATED"
+                            if "experimentally_validated" in str(dg.evidence_trail).lower()
+                            else ("INFERRED" if dg.confidence.lower() == "high" else "HYPOTHESIS")
+                        ),
+                    }
+                    for dg in diags
+                ],
             }
 
     async def _handle_causality_get_graph(self, params: Dict[str, Any]) -> Dict[str, Any]:

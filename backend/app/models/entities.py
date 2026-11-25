@@ -55,6 +55,10 @@ class RepositoryModel(Base):
     repo_url: Mapped[str] = mapped_column(String(512), nullable=False)
     repo_type: Mapped[str] = mapped_column(String(32), default="local")
     default_branch: Mapped[str] = mapped_column(String(64), default="main")
+    upstream_github_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    github_slug: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    scan_metadata_json: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
+    last_scanned_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     project: Mapped[Optional["ProjectModel"]] = relationship(
