@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,6 +16,7 @@ from backend.app.execution.runner import (
     BuildExecutionResult,
     DockerBuildBackend,
     LocalSandboxBackend,
+    terminate_build,
 )
 from backend.app.execution.workspace import WorkspaceManager
 from backend.app.fingerprinting.engine import fingerprinter
@@ -70,6 +71,7 @@ class BuildService:
         timeout_seconds: int = 1200,
         build_id: Optional[str] = None,
         project_name: str = "default",
+        on_output_chunk: Optional[Callable[[str], None]] = None,
     ) -> BuildServiceOutcome:
         """Execute a full build run and persist execution record and collected artifacts."""
         bid = build_id or f"build-{uuid.uuid4().hex[:10]}"
@@ -84,6 +86,7 @@ class BuildService:
                 timeout_seconds,
                 bid,
                 project_name,
+                on_output_chunk,
             )
 
         async with AsyncSessionLocal() as session:
@@ -97,6 +100,7 @@ class BuildService:
                     timeout_seconds,
                     bid,
                     project_name,
+                    on_output_chunk,
                 )
 
     async def _execute_build_pipeline(
@@ -109,6 +113,7 @@ class BuildService:
         timeout_seconds: int,
         build_id: str,
         project_name: str,
+        on_output_chunk: Optional[Callable[[str], None]] = None,
     ) -> BuildServiceOutcome:
         proj_repo = ProjectRepository(session)
         repo_repo = RepositoryRepository(session)
@@ -174,11 +179,13 @@ class BuildService:
             workspace_source_dir=source_dir,
             build_command=build_cmd,
             timeout_seconds=timeout_seconds,
+            on_output_chunk=on_output_chunk,
         )
 
         # 8. Update execution status in DB
         final_status = (
-            BuildStatus.COMPLETED if result.exit_code == 0
+            BuildStatus.CANCELLED if result.status == BuildStatus.CANCELLED
+            else BuildStatus.COMPLETED if result.exit_code == 0
             else BuildStatus.TIMED_OUT if result.status == BuildStatus.TIMED_OUT
             else BuildStatus.FAILED
         )
@@ -212,7 +219,8 @@ class BuildService:
         )
 
     async def cancel_build(self, build_id: str) -> Optional[BuildExecutionModel]:
-        """Cancel an in-flight build execution and record state in DB."""
+        """Terminate an active build process (if running) and mark cancelled in DB."""
+        await terminate_build(build_id)
         if self._session:
             return await BuildRepository(self._session).cancel_build(build_id)
         async with AsyncSessionLocal() as session:

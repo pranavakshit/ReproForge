@@ -1,0 +1,200 @@
+import { Theme } from "../theme.slint";
+import { StatusBadge } from "../components/status_badge.slint";
+
+export component PassportView inherits Rectangle {
+    in property <string> passport_id: "rf-pass-9a8f2c";
+    in property <string> artifact_name: "reproforge-core-0.1.0-py3-none-any.whl";
+    in property <string> sha256_hash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    in property <string> schema_version: "reproforge-passport-v1.0.json";
+    in property <string> timestamp: "2026-11-23T12:00:00Z";
+    in property <string> build_profile: "reproducible-isolated-wheel";
+    in property <string> host_kernel: "Windows 11 AMD64 (NT 10.0.26100)";
+    in property <string> toolchain_digest: "python=3.14.7,wheel=0.45.1,flit_core=3.11.0";
+    in property <string> verification_status: "VERIFIED_BIT_FOR_BIT";
+    in property <string> passport_json: "";
+    callback export_json_requested();
+    callback export_markdown_requested();
+
+    background: Theme.bg_primary;
+
+    VerticalLayout {
+        padding: 20px;
+        spacing: 16px;
+
+        // Header
+        HorizontalLayout {
+            alignment: space-between;
+            VerticalLayout {
+                spacing: 4px;
+                HorizontalLayout {
+                    spacing: 10px;
+                    Text {
+                        text: "Reproducibility Passport & Provenance Inspector";
+                        font-size: 18px;
+                        font-weight: 700;
+                        color: Theme.text_primary;
+                        vertical-alignment: center;
+                    }
+                    Rectangle {
+                        height: 20px;
+                        border-radius: Theme.radius_sm;
+                        background: Theme.status_exact_bg;
+                        border-width: 1px;
+                        border-color: Theme.status_exact_border;
+                        HorizontalLayout {
+                            padding-left: 8px; padding-right: 8px; alignment: center;
+                            Text {
+                                text: "Cryptographic Seal";
+                                font-size: 10px;
+                                font-weight: 600;
+                                color: Theme.status_exact;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+                Text {
+                    text: "Immutable attestation record encoding complete environmental provenance, toolchain versions, and verification proofs.";
+                    font-size: 12px;
+                    color: Theme.text_dim;
+                }
+            }
+
+            HorizontalLayout {
+                spacing: 10px;
+                Rectangle {
+                    width: 130px;
+                    height: 36px;
+                    background: Theme.bg_elevated;
+                    border-radius: Theme.radius_md;
+                    border-width: 1px;
+                    border-color: Theme.border_light;
+                    md_touch := TouchArea { clicked => { root.export_markdown_requested(); } }
+                    HorizontalLayout {
+                        alignment: center;
+                        Text { text: "📑 Export MD"; font-size: 11px; font-weight: 600; color: Theme.text_primary; vertical-alignment: center; }
+                    }
+                }
+                Rectangle {
+                    width: 140px;
+                    height: 36px;
+                    background: Theme.accent_blue;
+                    border-radius: Theme.radius_md;
+                    json_touch := TouchArea { clicked => { root.export_json_requested(); } }
+                    HorizontalLayout {
+                        alignment: center;
+                        Text { text: "📦 Export JSON"; font-size: 11px; font-weight: 600; color: Theme.text_primary; vertical-alignment: center; }
+                    }
+                }
+            }
+        }
+
+        // Passport Certificate Card
+        Rectangle {
+            background: Theme.bg_secondary;
+            border-radius: Theme.radius_md;
+            border-width: 1px;
+            border-color: Theme.border_accent;
+            padding: 16px;
+
+            VerticalLayout {
+                spacing: 12px;
+
+                HorizontalLayout {
+                    alignment: space-between;
+                    VerticalLayout {
+                        spacing: 2px;
+                        Text { text: "REPROFORGE PASSPORT CERTIFICATE"; font-size: 11px; font-weight: 700; color: Theme.accent_cyan; }
+                        Text { text: root.passport_id; font-size: 16px; font-weight: 700; color: Theme.text_primary; }
+                    }
+                    StatusBadge { text: root.verification_status; variant: "exact"; }
+                }
+
+                Rectangle { height: 1px; background: Theme.border_subtle; }
+
+                HorizontalLayout {
+                    spacing: 24px;
+                    VerticalLayout {
+                        spacing: 4px;
+                        Text { text: "TARGET ARTIFACT"; font-size: 10px; font-weight: 600; color: Theme.text_dim; }
+                        Text { text: root.artifact_name; font-size: 13px; font-weight: 600; color: Theme.text_primary; }
+                    }
+                    VerticalLayout {
+                        spacing: 4px;
+                        Text { text: "SCHEMA VERSION"; font-size: 10px; font-weight: 600; color: Theme.text_dim; }
+                        Text { text: root.schema_version; font-size: 12px; font-weight: 500; color: Theme.text_secondary; }
+                    }
+                    VerticalLayout {
+                        spacing: 4px;
+                        Text { text: "ATTESTATION TIMESTAMP"; font-size: 10px; font-weight: 600; color: Theme.text_dim; }
+                        Text { text: root.timestamp; font-size: 12px; font-weight: 500; color: Theme.text_secondary; }
+                    }
+                }
+
+                VerticalLayout {
+                    spacing: 4px;
+                    Text { text: "CRYPTOGRAPHIC ARTIFACT DIGEST (SHA-256)"; font-size: 10px; font-weight: 600; color: Theme.text_dim; }
+                    Rectangle {
+                        background: Theme.bg_primary;
+                        border-radius: 4px;
+                        padding: 8px;
+                        Text {
+                            text: root.sha256_hash;
+                            font-size: 12px;
+                            font-weight: 600;
+                            color: Theme.accent_cyan;
+                        }
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: 24px;
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        spacing: 4px;
+                        Text { text: "ENVIRONMENTAL HOST FINGERPRINT"; font-size: 10px; font-weight: 600; color: Theme.text_dim; }
+                        Text { text: root.host_kernel; font-size: 12px; color: Theme.text_secondary; }
+                    }
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        spacing: 4px;
+                        Text { text: "PINNED TOOLCHAIN DIGEST"; font-size: 10px; font-weight: 600; color: Theme.text_dim; }
+                        Text { text: root.toolchain_digest; font-size: 12px; color: Theme.text_secondary; }
+                    }
+                }
+            }
+        }
+
+        // Raw Passport JSON Inspector
+        Rectangle {
+            height: 280px;
+            background: Theme.bg_secondary;
+            border-radius: Theme.radius_md;
+            border-width: 1px;
+            border-color: Theme.border_subtle;
+
+            VerticalLayout {
+                padding: 14px;
+                spacing: 8px;
+
+                Text { text: "Attestation Payload (reproforge-passport-v1.0.json)"; font-size: 12px; font-weight: 600; color: Theme.text_primary; }
+
+                Rectangle {
+                    background: Theme.bg_card;
+                    border-radius: Theme.radius_sm;
+                    padding: 10px;
+
+                    Flickable {
+                        height: 220px;
+                        Text {
+                            text: (root.passport_json != "") ? root.passport_json :
+                                  "{\n  \"$schema\": \"https://reproforge.dev/schemas/passport-v1.0.json\",\n  \"passport_id\": \"rf-pass-9a8f2c\",\n  \"artifact\": {\n    \"filename\": \"reproforge-core-0.1.0-py3-none-any.whl\",\n    \"sha256\": \"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"\n  },\n  \"reproducibility\": {\n    \"verdict\": \"bit_for_bit_reproducible\",\n    \"cri\": 1.00\n  }\n}";
+                            font-size: 11px;
+                            color: Theme.text_muted;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

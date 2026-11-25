@@ -4,14 +4,14 @@ export component Sidebar inherits Rectangle {
     in property <int> active_index: 0;
     callback tab_selected(int);
 
-    width: 220px;
+    width: 230px;
     background: Theme.bg_secondary;
     border-width: 1px;
     border-color: Theme.border_subtle;
 
     VerticalLayout {
         padding: 12px;
-        spacing: 6px;
+        spacing: 4px;
         alignment: start;
 
         Text {
@@ -20,161 +20,150 @@ export component Sidebar inherits Rectangle {
             font-weight: 700;
             color: Theme.text_dim;
             letter-spacing: 0.8px;
-            padding-bottom: 6px;
+            padding-bottom: 4px;
         }
 
         // Tab 0: Overview
         Rectangle {
-            height: 38px;
+            height: 36px;
             border-radius: Theme.radius_md;
             background: (root.active_index == 0) ? Theme.bg_active :
                         (t0_touch.has_hover ? Theme.bg_hover : transparent);
             border-width: 1px;
             border-color: (root.active_index == 0) ? Theme.border_accent : transparent;
-
             t0_touch := TouchArea { clicked => { root.tab_selected(0); } }
-
             HorizontalLayout {
-                padding-left: 12px;
-                padding-right: 12px;
-                alignment: space-between;
-                Text {
-                    text: "Overview Dashboard";
-                    font-size: 13px;
-                    font-weight: (root.active_index == 0) ? 600 : 500;
-                    color: (root.active_index == 0) ? Theme.accent_cyan : Theme.text_secondary;
-                    vertical-alignment: center;
-                }
-                Text {
-                    text: "Ctrl+1";
-                    font-size: 10px;
-                    color: Theme.text_dim;
-                    vertical-alignment: center;
-                }
+                padding-left: 10px; padding-right: 10px; alignment: space-between;
+                Text { text: "Overview Dashboard"; font-size: 12px; font-weight: (root.active_index == 0) ? 600 : 500; color: (root.active_index == 0) ? Theme.accent_cyan : Theme.text_secondary; vertical-alignment: center; }
+                Text { text: "Ctrl+1"; font-size: 9px; color: Theme.text_dim; vertical-alignment: center; }
             }
         }
 
         // Tab 1: Repositories
         Rectangle {
-            height: 38px;
+            height: 36px;
             border-radius: Theme.radius_md;
             background: (root.active_index == 1) ? Theme.bg_active :
                         (t1_touch.has_hover ? Theme.bg_hover : transparent);
             border-width: 1px;
             border-color: (root.active_index == 1) ? Theme.border_accent : transparent;
-
             t1_touch := TouchArea { clicked => { root.tab_selected(1); } }
-
             HorizontalLayout {
-                padding-left: 12px;
-                padding-right: 12px;
-                alignment: space-between;
-                Text {
-                    text: "Repositories";
-                    font-size: 13px;
-                    font-weight: (root.active_index == 1) ? 600 : 500;
-                    color: (root.active_index == 1) ? Theme.accent_cyan : Theme.text_secondary;
-                    vertical-alignment: center;
-                }
-                Text {
-                    text: "Ctrl+2";
-                    font-size: 10px;
-                    color: Theme.text_dim;
-                    vertical-alignment: center;
-                }
+                padding-left: 10px; padding-right: 10px; alignment: space-between;
+                Text { text: "Repositories"; font-size: 12px; font-weight: (root.active_index == 1) ? 600 : 500; color: (root.active_index == 1) ? Theme.accent_cyan : Theme.text_secondary; vertical-alignment: center; }
+                Text { text: "Ctrl+2"; font-size: 9px; color: Theme.text_dim; vertical-alignment: center; }
             }
         }
 
         // Tab 2: Build Executions
         Rectangle {
-            height: 38px;
+            height: 36px;
             border-radius: Theme.radius_md;
             background: (root.active_index == 2) ? Theme.bg_active :
                         (t2_touch.has_hover ? Theme.bg_hover : transparent);
             border-width: 1px;
             border-color: (root.active_index == 2) ? Theme.border_accent : transparent;
-
             t2_touch := TouchArea { clicked => { root.tab_selected(2); } }
-
             HorizontalLayout {
-                padding-left: 12px;
-                padding-right: 12px;
-                alignment: space-between;
-                Text {
-                    text: "Build Executions";
-                    font-size: 13px;
-                    font-weight: (root.active_index == 2) ? 600 : 500;
-                    color: (root.active_index == 2) ? Theme.accent_cyan : Theme.text_secondary;
-                    vertical-alignment: center;
-                }
-                Text {
-                    text: "Ctrl+3";
-                    font-size: 10px;
-                    color: Theme.text_dim;
-                    vertical-alignment: center;
-                }
+                padding-left: 10px; padding-right: 10px; alignment: space-between;
+                Text { text: "Build Executions"; font-size: 12px; font-weight: (root.active_index == 2) ? 600 : 500; color: (root.active_index == 2) ? Theme.accent_cyan : Theme.text_secondary; vertical-alignment: center; }
+                Text { text: "Ctrl+3"; font-size: 9px; color: Theme.text_dim; vertical-alignment: center; }
             }
         }
 
         // Tab 3: Diff & Diagnostics
         Rectangle {
-            height: 38px;
+            height: 36px;
             border-radius: Theme.radius_md;
             background: (root.active_index == 3) ? Theme.bg_active :
                         (t3_touch.has_hover ? Theme.bg_hover : transparent);
             border-width: 1px;
             border-color: (root.active_index == 3) ? Theme.border_accent : transparent;
-
             t3_touch := TouchArea { clicked => { root.tab_selected(3); } }
-
             HorizontalLayout {
-                padding-left: 12px;
-                padding-right: 12px;
-                alignment: space-between;
-                Text {
-                    text: "Diff & Diagnostics";
-                    font-size: 13px;
-                    font-weight: (root.active_index == 3) ? 600 : 500;
-                    color: (root.active_index == 3) ? Theme.accent_cyan : Theme.text_secondary;
-                    vertical-alignment: center;
-                }
-                Text {
-                    text: "Ctrl+4";
-                    font-size: 10px;
-                    color: Theme.text_dim;
-                    vertical-alignment: center;
-                }
+                padding-left: 10px; padding-right: 10px; alignment: space-between;
+                Text { text: "Diff & Diagnostics"; font-size: 12px; font-weight: (root.active_index == 3) ? 600 : 500; color: (root.active_index == 3) ? Theme.accent_cyan : Theme.text_secondary; vertical-alignment: center; }
+                Text { text: "Ctrl+4"; font-size: 9px; color: Theme.text_dim; vertical-alignment: center; }
             }
         }
 
-        // Tab 4: Settings
+        // Tab 4: Build Drift Causality Graph
         Rectangle {
-            height: 38px;
+            height: 36px;
             border-radius: Theme.radius_md;
             background: (root.active_index == 4) ? Theme.bg_active :
                         (t4_touch.has_hover ? Theme.bg_hover : transparent);
             border-width: 1px;
             border-color: (root.active_index == 4) ? Theme.border_accent : transparent;
-
             t4_touch := TouchArea { clicked => { root.tab_selected(4); } }
-
             HorizontalLayout {
-                padding-left: 12px;
-                padding-right: 12px;
-                alignment: space-between;
-                Text {
-                    text: "Settings & System";
-                    font-size: 13px;
-                    font-weight: (root.active_index == 4) ? 600 : 500;
-                    color: (root.active_index == 4) ? Theme.accent_cyan : Theme.text_secondary;
-                    vertical-alignment: center;
-                }
-                Text {
-                    text: "Ctrl+5";
-                    font-size: 10px;
-                    color: Theme.text_dim;
-                    vertical-alignment: center;
-                }
+                padding-left: 10px; padding-right: 10px; alignment: space-between;
+                Text { text: "Causality Graph"; font-size: 12px; font-weight: (root.active_index == 4) ? 600 : 500; color: (root.active_index == 4) ? Theme.accent_cyan : Theme.text_secondary; vertical-alignment: center; }
+                Text { text: "Ctrl+5"; font-size: 9px; color: Theme.text_dim; vertical-alignment: center; }
+            }
+        }
+
+        // Tab 5: Controlled Perturbation Lab
+        Rectangle {
+            height: 36px;
+            border-radius: Theme.radius_md;
+            background: (root.active_index == 5) ? Theme.bg_active :
+                        (t5_touch.has_hover ? Theme.bg_hover : transparent);
+            border-width: 1px;
+            border-color: (root.active_index == 5) ? Theme.border_accent : transparent;
+            t5_touch := TouchArea { clicked => { root.tab_selected(5); } }
+            HorizontalLayout {
+                padding-left: 10px; padding-right: 10px; alignment: space-between;
+                Text { text: "Perturbation Lab"; font-size: 12px; font-weight: (root.active_index == 5) ? 600 : 500; color: (root.active_index == 5) ? Theme.accent_cyan : Theme.text_secondary; vertical-alignment: center; }
+                Text { text: "Ctrl+6"; font-size: 9px; color: Theme.text_dim; vertical-alignment: center; }
+            }
+        }
+
+        // Tab 6: Reproducibility Passport
+        Rectangle {
+            height: 36px;
+            border-radius: Theme.radius_md;
+            background: (root.active_index == 6) ? Theme.bg_active :
+                        (t6_touch.has_hover ? Theme.bg_hover : transparent);
+            border-width: 1px;
+            border-color: (root.active_index == 6) ? Theme.border_accent : transparent;
+            t6_touch := TouchArea { clicked => { root.tab_selected(6); } }
+            HorizontalLayout {
+                padding-left: 10px; padding-right: 10px; alignment: space-between;
+                Text { text: "Passport Provenance"; font-size: 12px; font-weight: (root.active_index == 6) ? 600 : 500; color: (root.active_index == 6) ? Theme.accent_cyan : Theme.text_secondary; vertical-alignment: center; }
+                Text { text: "Ctrl+7"; font-size: 9px; color: Theme.text_dim; vertical-alignment: center; }
+            }
+        }
+
+        // Tab 7: Self-Healing Remediation
+        Rectangle {
+            height: 36px;
+            border-radius: Theme.radius_md;
+            background: (root.active_index == 7) ? Theme.bg_active :
+                        (t7_touch.has_hover ? Theme.bg_hover : transparent);
+            border-width: 1px;
+            border-color: (root.active_index == 7) ? Theme.border_accent : transparent;
+            t7_touch := TouchArea { clicked => { root.tab_selected(7); } }
+            HorizontalLayout {
+                padding-left: 10px; padding-right: 10px; alignment: space-between;
+                Text { text: "Self-Healing Cockpit"; font-size: 12px; font-weight: (root.active_index == 7) ? 600 : 500; color: (root.active_index == 7) ? Theme.accent_cyan : Theme.text_secondary; vertical-alignment: center; }
+                Text { text: "Ctrl+8"; font-size: 9px; color: Theme.text_dim; vertical-alignment: center; }
+            }
+        }
+
+        // Tab 8: Settings & System
+        Rectangle {
+            height: 36px;
+            border-radius: Theme.radius_md;
+            background: (root.active_index == 8) ? Theme.bg_active :
+                        (t8_touch.has_hover ? Theme.bg_hover : transparent);
+            border-width: 1px;
+            border-color: (root.active_index == 8) ? Theme.border_accent : transparent;
+            t8_touch := TouchArea { clicked => { root.tab_selected(8); } }
+            HorizontalLayout {
+                padding-left: 10px; padding-right: 10px; alignment: space-between;
+                Text { text: "Settings & System"; font-size: 12px; font-weight: (root.active_index == 8) ? 600 : 500; color: (root.active_index == 8) ? Theme.accent_cyan : Theme.text_secondary; vertical-alignment: center; }
+                Text { text: "Ctrl+9"; font-size: 9px; color: Theme.text_dim; vertical-alignment: center; }
             }
         }
     }

@@ -3,17 +3,57 @@
 import asyncio
 import os
 import shutil
+import sys
 import time
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional, Set
 from pydantic import BaseModel
 
 from backend.app.core.logging import get_logger
 from backend.app.schemas.entities import BuildStatus
 
 logger = get_logger("reproforge.execution.runner")
+
+# Registry of live build subprocesses keyed by build_id for active cancellation
+ACTIVE_BUILD_PROCESSES: Dict[str, asyncio.subprocess.Process] = {}
+CANCELLED_BUILD_IDS: Set[str] = set()
+
+
+async def terminate_build(build_id: str) -> bool:
+    """Forcibly terminate an active build process tree if running."""
+    CANCELLED_BUILD_IDS.add(build_id)
+    proc = ACTIVE_BUILD_PROCESSES.get(build_id)
+    if not proc or proc.returncode is not None:
+        return False
+
+    try:
+        if sys.platform == "win32":
+            kill_proc = await asyncio.create_subprocess_exec(
+                "taskkill",
+                "/F",
+                "/T",
+                "/PID",
+                str(proc.pid),
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await kill_proc.wait()
+        else:
+            proc.terminate()
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=2.0)
+            except asyncio.TimeoutError:
+                proc.kill()
+        logger.info(f"[{build_id}] Terminated active process PID={proc.pid}")
+        return True
+    except ProcessLookupError:
+        return False
+    except Exception as exc:
+        logger.warning(f"[{build_id}] Failed terminating process PID={proc.pid}: {exc}")
+        return False
 
 
 class BuildExecutionResult(BaseModel):
@@ -42,6 +82,7 @@ class BaseBuildBackend(ABC):
         build_command: str,
         env_vars: Optional[Dict[str, str]] = None,
         timeout_seconds: int = 1200,
+        on_output_chunk: Optional[Callable[[str], None]] = None,
     ) -> BuildExecutionResult:
         """Execute a build command inside the isolated environment."""
         pass
@@ -57,6 +98,7 @@ class LocalSandboxBackend(BaseBuildBackend):
         build_command: str,
         env_vars: Optional[Dict[str, str]] = None,
         timeout_seconds: int = 1200,
+        on_output_chunk: Optional[Callable[[str], None]] = None,
     ) -> BuildExecutionResult:
         log_file = workspace_source_dir.parent / f"{build_id}.log"
         started_at = datetime.now(timezone.utc)
@@ -73,22 +115,32 @@ class LocalSandboxBackend(BaseBuildBackend):
         exit_code = -1
         error_msg = None
 
-        with open(log_file, "w", encoding="utf-8") as log_fp:
-            log_fp.write(f"=== ReproForge Build Log: {build_id} ===\n")
-            log_fp.write(f"Timestamp: {started_at.isoformat()}\n")
-            log_fp.write(f"Command: {build_command}\n")
-            log_fp.write(f"Working Directory: {workspace_source_dir}\n")
-            log_fp.write("=========================================\n\n")
-            log_fp.flush()
+        CANCELLED_BUILD_IDS.discard(build_id)
 
+        with open(log_file, "w", encoding="utf-8") as log_fp:
+            header = (
+                f"=== ReproForge Build Log: {build_id} ===\n"
+                f"Timestamp: {started_at.isoformat()}\n"
+                f"Command: {build_command}\n"
+                f"Working Directory: {workspace_source_dir}\n"
+                f"=========================================\n\n"
+            )
+            log_fp.write(header)
+            log_fp.flush()
+            if on_output_chunk:
+                on_output_chunk(header)
+
+            proc: Optional[asyncio.subprocess.Process] = None
             try:
                 proc = await asyncio.create_subprocess_shell(
                     build_command,
                     cwd=str(workspace_source_dir),
                     env=clean_env,
+                    stdin=asyncio.subprocess.DEVNULL,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                 )
+                ACTIVE_BUILD_PROCESSES[build_id] = proc
 
                 async def stream_output(stream, prefix):
                     while True:
@@ -96,8 +148,14 @@ class LocalSandboxBackend(BaseBuildBackend):
                         if not line:
                             break
                         decoded = line.decode("utf-8", errors="replace")
-                        log_fp.write(f"{prefix}{decoded}")
+                        formatted = f"{prefix}{decoded}"
+                        log_fp.write(formatted)
                         log_fp.flush()
+                        if on_output_chunk:
+                            try:
+                                on_output_chunk(formatted)
+                            except Exception:
+                                pass
 
                 try:
                     await asyncio.wait_for(
@@ -108,25 +166,38 @@ class LocalSandboxBackend(BaseBuildBackend):
                         timeout=timeout_seconds,
                     )
                     await proc.wait()
-                    exit_code = proc.returncode or 0
-                    status = BuildStatus.COMPLETED if exit_code == 0 else BuildStatus.FAILED
+                    if build_id in CANCELLED_BUILD_IDS:
+                        exit_code = -1
+                        status = BuildStatus.CANCELLED
+                        error_msg = "Build cancelled by user"
+                        log_fp.write("\n[CANCELLED] Build execution terminated cleanly.\n")
+                    else:
+                        exit_code = proc.returncode or 0
+                        status = BuildStatus.COMPLETED if exit_code == 0 else BuildStatus.FAILED
                 except asyncio.TimeoutError:
                     logger.error(f"[{build_id}] Build timed out after {timeout_seconds} seconds.")
-                    try:
-                        proc.kill()
-                    except ProcessLookupError:
-                        pass
+                    await terminate_build(build_id)
+                    CANCELLED_BUILD_IDS.discard(build_id)
                     status = BuildStatus.TIMED_OUT
                     exit_code = 124
                     error_msg = f"Build timed out after {timeout_seconds} seconds"
                     log_fp.write(f"\n[FATAL] {error_msg}\n")
 
             except Exception as e:
-                logger.error(f"[{build_id}] Unexpected execution failure: {e}")
-                status = BuildStatus.FAILED
-                exit_code = 1
-                error_msg = str(e)
-                log_fp.write(f"\n[EXCEPTION] {e}\n")
+                if build_id in CANCELLED_BUILD_IDS:
+                    status = BuildStatus.CANCELLED
+                    exit_code = -1
+                    error_msg = "Build cancelled by user"
+                    log_fp.write("\n[CANCELLED] Build execution terminated cleanly.\n")
+                else:
+                    logger.error(f"[{build_id}] Unexpected execution failure: {e}")
+                    status = BuildStatus.FAILED
+                    exit_code = 1
+                    error_msg = str(e)
+                    log_fp.write(f"\n[EXCEPTION] {e}\n")
+            finally:
+                ACTIVE_BUILD_PROCESSES.pop(build_id, None)
+                CANCELLED_BUILD_IDS.discard(build_id)
 
         end_time = time.monotonic()
         completed_at = datetime.now(timezone.utc)
@@ -158,6 +229,7 @@ class DockerBuildBackend(BaseBuildBackend):
         build_command: str = "docker build --no-cache",
         env_vars: Optional[Dict[str, str]] = None,
         timeout_seconds: int = 1200,
+        on_output_chunk: Optional[Callable[[str], None]] = None,
     ) -> BuildExecutionResult:
         docker_bin = shutil.which("docker")
         if not docker_bin:
@@ -175,6 +247,7 @@ class DockerBuildBackend(BaseBuildBackend):
             build_command=full_command,
             env_vars=env_vars,
             timeout_seconds=timeout_seconds,
+            on_output_chunk=on_output_chunk,
         )
         result.backend_type = "docker"
         result.metadata["image_tag"] = image_tag

@@ -49,6 +49,7 @@ class ArtifactCollector:
             try:
                 subprocess.run(
                     ["docker", "save", docker_image_tag, "-o", str(image_tar)],
+                    stdin=subprocess.DEVNULL,
                     check=True,
                     capture_output=True,
                 )

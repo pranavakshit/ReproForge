@@ -1,6 +1,7 @@
 """Repositories for Project and Git Repository persistence."""
 
 from datetime import datetime
+from pathlib import Path
 from typing import List, Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,9 +36,21 @@ class RepositoryRepository(BaseRepository[RepositoryModel]):
     def __init__(self, session: AsyncSession):
         super().__init__(RepositoryModel, session)
 
+    @staticmethod
+    def canonicalize_repo_url(repo_url: str, repo_type: str = "local") -> str:
+        """Normalize local paths to resolved canonical strings and strip trailing slashes on URLs."""
+        if repo_type == "local" or ("://" not in repo_url and not repo_url.startswith("git@")):
+            candidate = Path(repo_url)
+            if candidate.exists():
+                return str(candidate.resolve())
+        return repo_url.rstrip("/")
+
     async def get_by_url(self, repo_url: str) -> Optional[RepositoryModel]:
-        """Find repository by URL/path."""
-        stmt = select(RepositoryModel).where(RepositoryModel.repo_url == repo_url)
+        """Find repository by exact or canonicalized URL/path."""
+        canonical = self.canonicalize_repo_url(repo_url)
+        stmt = select(RepositoryModel).where(
+            RepositoryModel.repo_url.in_([repo_url, canonical])
+        )
         result = await self.session.execute(stmt)
         return result.scalars().first()
 
@@ -49,13 +62,14 @@ class RepositoryRepository(BaseRepository[RepositoryModel]):
         repo_type: str = "local",
         default_branch: str = "main",
     ) -> RepositoryModel:
-        """Find existing repository or create a new record."""
-        existing = await self.get_by_url(repo_url)
+        """Find existing repository or create a new record using canonical path/URL."""
+        canonical = self.canonicalize_repo_url(repo_url, repo_type=repo_type)
+        existing = await self.get_by_url(canonical)
         if existing:
             return existing
         new_repo = RepositoryModel(
             name=name,
-            repo_url=repo_url,
+            repo_url=canonical,
             project_id=project_id,
             repo_type=repo_type,
             default_branch=default_branch,

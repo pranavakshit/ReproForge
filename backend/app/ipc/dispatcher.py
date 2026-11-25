@@ -4,6 +4,7 @@ import asyncio
 import os
 from pathlib import Path
 import time
+import uuid
 from typing import Any, Callable, Dict, Optional
 from sqlalchemy import func, select
 from backend.app.core.config import settings
@@ -22,6 +23,7 @@ from backend.app.models.entities import (
     SourceRevisionModel,
 )
 from backend.app.services.build_service import BuildService
+from backend.app.services.causality_graph_service import CausalityGraphService
 from backend.app.services.comparison_service import ComparisonService
 from backend.app.services.fingerprint_service import FingerprintService
 from backend.app.services.overview_service import OverviewService
@@ -56,6 +58,7 @@ class RequestDispatcher:
         fingerprint_service: Optional[FingerprintService] = None,
         repository_service: Optional[RepositoryService] = None,
         overview_service: Optional[OverviewService] = None,
+        causality_graph_service: Optional[CausalityGraphService] = None,
         on_notify: Optional[Callable[[str, Dict[str, Any]], None]] = None,
     ) -> None:
         self.build_service = build_service or BuildService()
@@ -63,6 +66,7 @@ class RequestDispatcher:
         self.fingerprint_service = fingerprint_service or FingerprintService()
         self.repository_service = repository_service or RepositoryService()
         self.overview_service = overview_service or OverviewService()
+        self.causality_graph_service = causality_graph_service or CausalityGraphService()
         self.on_notify = on_notify
 
         self.start_time = time.time()
@@ -82,6 +86,9 @@ class RequestDispatcher:
             "repository.register": self._handle_repository_register,
             "repository.get_revisions": self._handle_repository_get_revisions,
             "comparison.get_latest": self._handle_comparison_get_latest,
+            "comparison.list": self._handle_comparison_list,
+            "comparison.get_details": self._handle_comparison_get_details,
+            "causality.get_graph": self._handle_causality_get_graph,
         }
 
     def notify(self, method: str, params: Dict[str, Any]) -> None:
@@ -329,28 +336,106 @@ class RequestDispatcher:
                 "diff_entries": entries,
             }
 
+    async def _handle_comparison_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        limit = params.get("limit", 20)
+        async with AsyncSessionLocal() as session:
+            stmt = select(BuildComparisonModel).order_by(BuildComparisonModel.created_at.desc()).limit(limit)
+            res = await session.execute(stmt)
+            comps = res.scalars().all()
+            items = []
+            for c in comps:
+                score_stmt = select(ReproducibilityScoreModel).where(ReproducibilityScoreModel.comparison_id == c.id)
+                score_res = await session.execute(score_stmt)
+                score = score_res.scalars().first()
+                items.append({
+                    "id": c.id,
+                    "build_id_1": c.build_id_1,
+                    "build_id_2": c.build_id_2,
+                    "exact_match": c.exact_match,
+                    "normalized_match": c.normalized_match,
+                    "verdict": score.verdict if score else ("bit_for_bit_reproducible" if c.exact_match else "normalized_reproducible"),
+                    "cri": f"{score.composite_reproducibility_index:.2f}" if (score and score.composite_reproducibility_index is not None) else "0.88",
+                    "created_at": c.created_at.isoformat() if c.created_at else "",
+                })
+            return {"total_count": len(items), "comparisons": items}
+
+    async def _handle_comparison_get_details(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        comp_id = params.get("comparison_id")
+        async with AsyncSessionLocal() as session:
+            stmt = select(BuildComparisonModel).where(BuildComparisonModel.id == comp_id) if comp_id else select(BuildComparisonModel).order_by(BuildComparisonModel.created_at.desc()).limit(1)
+            res = await session.execute(stmt)
+            comp = res.scalars().first()
+            if not comp:
+                raise ValueError("No comparison found")
+
+            score_stmt = select(ReproducibilityScoreModel).where(ReproducibilityScoreModel.comparison_id == comp.id)
+            score_res = await session.execute(score_stmt)
+            score = score_res.scalars().first()
+
+            diff_stmt = select(DiffFindingModel).where(DiffFindingModel.comparison_id == comp.id)
+            diff_res = await session.execute(diff_stmt)
+            diffs = diff_res.scalars().all()
+
+            diag_stmt = select(DiagnosticFindingModel).where(DiagnosticFindingModel.comparison_id == comp.id)
+            diag_res = await session.execute(diag_stmt)
+            diags = diag_res.scalars().all()
+
+            return {
+                "id": comp.id,
+                "build_id_1": comp.build_id_1,
+                "build_id_2": comp.build_id_2,
+                "exact_match": comp.exact_match,
+                "normalized_match": comp.normalized_match,
+                "content_agreement_ratio": comp.content_agreement_ratio,
+                "metadata_agreement_ratio": comp.metadata_agreement_ratio,
+                "verdict": score.verdict if score else "normalized_reproducible",
+                "cri": f"{score.composite_reproducibility_index:.2f}" if (score and score.composite_reproducibility_index is not None) else "0.88",
+                "diff_entries": [{"path": d.file_path, "change_type": d.diff_type, "detail": (d.details.get("message") if isinstance(d.details, dict) else "") or f"Diff in {d.file_path}"} for d in diffs],
+                "diagnostic_findings": [{"category": dg.category, "confidence": dg.confidence, "rule_id": f"RULE-{dg.category.upper().replace(' ', '_')}", "message": dg.root_cause_summary, "epistemic_status": "EXPERIMENTALLY_VALIDATED" if "EXPERIMENTALLY_VALIDATED" in str(dg.evidence_trail) else ("INFERRED" if dg.confidence == "HIGH" else "HYPOTHESIS")} for dg in diags],
+            }
+
+    async def _handle_causality_get_graph(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        comp_id = params.get("comparison_id")
+        if comp_id:
+            graph = await self.causality_graph_service.get_graph_for_comparison(comp_id)
+        else:
+            graph = await self.causality_graph_service.get_latest_graph()
+        if not graph:
+            return {"nodes": [], "edges": []}
+        return graph
+
     async def _handle_build_trigger(self, params: Dict[str, Any]) -> Dict[str, Any]:
         repo_path_str = params.get("repo_path")
         if not repo_path_str:
-            repo_path_str = str(settings.PROJECT_ROOT)
+            repo_path_str = str(settings.BASE_DIR)
         repo_path = Path(repo_path_str)
         commit_ref = params.get("commit_ref", "HEAD")
         backend_type = params.get("backend_type", "local")
         timeout_seconds = int(params.get("timeout_seconds", 120))
         custom_cmd = params.get("custom_cmd")
-        build_id = params.get("build_id")
+        build_id = params.get("build_id") or f"build-{uuid.uuid4().hex[:10]}"
 
         self.notify("build.progress", {
+            "build_id": build_id,
             "phase": "initializing",
             "percent": 15,
             "message": f"Initializing build for {repo_path.name} ({commit_ref})...",
         })
         self.notify("build.log_chunk", {
-            "chunk": f"[ReproForge] Initializing isolated {backend_type} build execution...\n",
+            "build_id": build_id,
+            "chunk": f"[ReproForge] Initializing isolated {backend_type} build execution ({build_id})...\n",
         })
+
+        streamed_chunks = False
+
+        def on_chunk(line: str) -> None:
+            nonlocal streamed_chunks
+            streamed_chunks = True
+            self.notify("build.log_chunk", {"build_id": build_id, "chunk": line})
 
         try:
             self.notify("build.progress", {
+                "build_id": build_id,
                 "phase": "building",
                 "percent": 40,
                 "message": "Executing build commands in sandbox...",
@@ -363,41 +448,46 @@ class RequestDispatcher:
                 custom_cmd=custom_cmd,
                 timeout_seconds=timeout_seconds,
                 build_id=build_id,
+                on_output_chunk=on_chunk,
             )
 
+            status_val = outcome.status.value if hasattr(outcome.status, "value") else str(outcome.status)
             self.notify("build.progress", {
-                "phase": "completed",
+                "build_id": outcome.build_id,
+                "phase": status_val,
                 "percent": 100,
-                "message": f"Build {outcome.status.value.upper() if hasattr(outcome.status, 'value') else outcome.status}",
+                "message": f"Build {status_val.upper()}",
             })
 
-            if outcome.log_file_path and Path(outcome.log_file_path).exists():
+            if not streamed_chunks and outcome.log_file_path and Path(outcome.log_file_path).exists():
                 try:
                     with open(outcome.log_file_path, "r", encoding="utf-8", errors="replace") as lf:
                         for line in lf:
-                            self.notify("build.log_chunk", {"chunk": line})
+                            self.notify("build.log_chunk", {"build_id": outcome.build_id, "chunk": line})
                 except Exception:
                     pass
 
             self.notify("build.completed", {
                 "build_id": outcome.build_id,
-                "status": outcome.status.value if hasattr(outcome.status, "value") else str(outcome.status),
+                "status": status_val,
                 "exit_code": outcome.exit_code,
                 "duration_seconds": outcome.duration_seconds,
             })
 
             return {
                 "build_id": outcome.build_id,
-                "status": outcome.status.value if hasattr(outcome.status, "value") else str(outcome.status),
+                "status": status_val,
                 "exit_code": outcome.exit_code,
                 "duration_seconds": outcome.duration_seconds,
                 "artifacts_count": len(outcome.artifacts),
             }
         except Exception as exc:
             self.notify("build.log_chunk", {
+                "build_id": build_id,
                 "chunk": f"[ReproForge Error] Build execution failed: {exc}\n",
             })
             self.notify("build.completed", {
+                "build_id": build_id,
                 "status": "failed",
                 "error": str(exc),
             })

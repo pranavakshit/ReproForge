@@ -6,20 +6,24 @@ import os
 import tarfile
 import time
 import zipfile
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Tuple
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
+from backend.app.comparison.hasher import ArtifactHasher
 from backend.app.core.config import settings
 from backend.app.database.session import AsyncSessionLocal
 from backend.app.models.entities import (
     BuildExecutionModel,
     EnvironmentFingerprintModel,
+    ProjectModel,
     RepositoryModel,
     SourceRevisionModel,
 )
 from backend.app.orchestration.repo_seeder import seed_real_repositories
+from backend.app.repositories.artifact_repo import ArtifactRepository
+from backend.app.schemas.entities import ArtifactItemCreate
 from backend.app.services.comparison_service import ComparisonService
 from backend.app.services.fingerprint_service import FingerprintService
 
@@ -44,8 +48,25 @@ def create_synthetic_zip(path: Path, files: dict[str, bytes], date_time: Tuple[i
             zf.writestr(zi, data)
 
 
+async def purge_test_pollution() -> int:
+    """Remove leftover temporary pytest repositories (e.g. cli_test_repo or relative '.') from live DB."""
+    async with AsyncSessionLocal() as session:
+        async with session.begin():
+            stmt = select(RepositoryModel).where(
+                (RepositoryModel.name == "cli_test_repo") | (RepositoryModel.repo_url == ".")
+            )
+            res = await session.execute(stmt)
+            stale = res.scalars().all()
+            count = len(stale)
+            for item in stale:
+                await session.delete(item)
+            return count
+
+
 async def seed_real_builds_and_comparisons() -> None:
-    """Populate authentic build executions and execute real artifact comparisons."""
+    """Populate authentic build executions, persisted artifacts, and real artifact comparisons."""
+    await purge_test_pollution()
+
     # 1. Ensure real repositories and revisions are seeded
     await seed_real_repositories(limit_commits_per_repo=30)
 
@@ -107,7 +128,7 @@ async def seed_real_builds_and_comparisons() -> None:
                     f"Revision: {rev.commit_sha} (Branch: {rev.branch_name})\n"
                     f"Author: {rev.author_name}\n"
                     f"Profile: {profile}\n"
-                    f"Timestamp: {datetime.utcnow().isoformat()}\n"
+                    f"Timestamp: {datetime.now(timezone.utc).isoformat()}\n"
                     f"--------------------------------------------------\n"
                     f"[1/4] Cloning clean revision from local git cache... Done (0.2s)\n"
                     f"[2/4] Setting up clean isolated build sandbox... Done (0.4s)\n"
@@ -127,8 +148,8 @@ async def seed_real_builds_and_comparisons() -> None:
                     profile_name=profile,
                     status="completed",
                     exit_code=exit_code,
-                    started_at=datetime.utcnow(),
-                    completed_at=datetime.utcnow(),
+                    started_at=datetime.now(timezone.utc),
+                    completed_at=datetime.now(timezone.utc),
                     duration_seconds=duration,
                     log_file_path=str(log_file),
                 )
@@ -155,6 +176,22 @@ async def seed_real_builds_and_comparisons() -> None:
     create_synthetic_zip(art2_exact, whl_files, (2026, 11, 23, 12, 0, 0))
 
     if len(created_builds) >= 2:
+        async with AsyncSessionLocal() as session:
+            async with session.begin():
+                art_repo = ArtifactRepository(session)
+                for b_obj, p_obj in [(created_builds[0], art1_exact), (created_builds[1], art2_exact)]:
+                    await art_repo.record_artifacts(
+                        b_obj.id,
+                        [
+                            ArtifactItemCreate(
+                                build_execution_id=b_obj.id,
+                                relative_path=p_obj.name,
+                                artifact_type="python_wheel",
+                                file_size_bytes=p_obj.stat().st_size,
+                                strict_sha256=ArtifactHasher.compute_sha256(p_obj),
+                            )
+                        ],
+                    )
         await comp_service.compare_artifacts(
             art1_exact, art2_exact,
             build_id_1=created_builds[0].id,
@@ -173,6 +210,22 @@ async def seed_real_builds_and_comparisons() -> None:
     create_synthetic_tar(art2_norm, locai_files, mtime=1763890000) # 10000s timestamp drift
 
     if len(created_builds) >= 4:
+        async with AsyncSessionLocal() as session:
+            async with session.begin():
+                art_repo = ArtifactRepository(session)
+                for b_obj, p_obj in [(created_builds[2], art1_norm), (created_builds[3], art2_norm)]:
+                    await art_repo.record_artifacts(
+                        b_obj.id,
+                        [
+                            ArtifactItemCreate(
+                                build_execution_id=b_obj.id,
+                                relative_path=p_obj.name,
+                                artifact_type="tar_archive",
+                                file_size_bytes=p_obj.stat().st_size,
+                                strict_sha256=ArtifactHasher.compute_sha256(p_obj),
+                            )
+                        ],
+                    )
         await comp_service.compare_artifacts(
             art1_norm, art2_norm,
             build_id_1=created_builds[2].id,
@@ -191,6 +244,22 @@ async def seed_real_builds_and_comparisons() -> None:
     create_synthetic_tar(art2_doc, doc_files_a, mtime=1763895000)
 
     if len(created_builds) >= 6:
+        async with AsyncSessionLocal() as session:
+            async with session.begin():
+                art_repo = ArtifactRepository(session)
+                for b_obj, p_obj in [(created_builds[4], art1_doc), (created_builds[5], art2_doc)]:
+                    await art_repo.record_artifacts(
+                        b_obj.id,
+                        [
+                            ArtifactItemCreate(
+                                build_execution_id=b_obj.id,
+                                relative_path=p_obj.name,
+                                artifact_type="tar_archive",
+                                file_size_bytes=p_obj.stat().st_size,
+                                strict_sha256=ArtifactHasher.compute_sha256(p_obj),
+                            )
+                        ],
+                    )
         await comp_service.compare_artifacts(
             art1_doc, art2_doc,
             build_id_1=created_builds[4].id,

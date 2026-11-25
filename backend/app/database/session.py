@@ -55,6 +55,24 @@ AsyncSessionLocal = async_sessionmaker(
 )
 
 
+def configure_database_engine(database_url: str) -> AsyncEngine:
+    """Reconfigure global async database engine & session factory (primarily for test isolation)."""
+    global engine, AsyncSessionLocal
+    engine = create_async_engine(
+        database_url,
+        echo=settings.DEBUG,
+        future=True,
+    )
+    event.listen(engine.sync_engine, "connect", configure_sqlite_pragmas)
+    AsyncSessionLocal.configure(bind=engine)
+    return engine
+
+
+async def dispose_database_engine() -> None:
+    """Dispose current async database engine connections cleanly."""
+    await engine.dispose()
+
+
 async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
     """Dependency for providing an async database session."""
     async with AsyncSessionLocal() as session:

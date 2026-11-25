@@ -5,20 +5,36 @@ import { AboutModal } from "components/about_modal.slint";
 import { OverviewView, RecentBuildItem } from "views/overview.slint";
 import { RepositoriesView, RepoItem, RevisionItem } from "views/repos.slint";
 import { BuildsView, BuildRowData } from "views/builds.slint";
-import { DiagnosticsView, DiffEntry } from "views/diagnostics.slint";
+import { DiagnosticsView, DiffEntry, DiagnosticFindingItem } from "views/diagnostics.slint";
+import { CausalityGraphView, GraphNodeItem, GraphEdgeItem } from "views/causality_graph.slint";
+import { PerturbationView, PerturbationParam, SensitivityResult } from "views/perturbation.slint";
+import { PassportView } from "views/passport.slint";
+import { RemediationView, RemediationProposal } from "views/remediation.slint";
 import { SettingsView } from "views/settings.slint";
 
-export { BuildRowData, RepoItem, RevisionItem, RecentBuildItem, DiffEntry }
+export {
+    BuildRowData,
+    RepoItem,
+    RevisionItem,
+    RecentBuildItem,
+    DiffEntry,
+    DiagnosticFindingItem,
+    GraphNodeItem,
+    GraphEdgeItem,
+    PerturbationParam,
+    SensitivityResult,
+    RemediationProposal,
+}
 
 export component MainWindow inherits Window {
     title: "ReproForge — Build Reproducibility Framework";
-    preferred-width: 1180px;
-    preferred-height: 760px;
-    min-width: 960px;
-    min-height: 640px;
+    preferred-width: 1220px;
+    preferred-height: 780px;
+    min-width: 1020px;
+    min-height: 660px;
     background: Theme.bg_primary;
 
-    // View Routing State
+    // View Routing State (0: Overview, 1: Repos, 2: Builds, 3: Diagnostics, 4: Causality, 5: Perturbation, 6: Passport, 7: Remediation, 8: Settings)
     in-out property <int> active_tab: 0;
 
     // Global Telemetry State
@@ -63,11 +79,43 @@ export component MainWindow inherits Window {
     in property <bool> is_build_running: false;
 
     // Diagnostics Properties
-    in property <string> diag_target_a: "bld-rec-00001 (Host Win11)";
-    in property <string> diag_target_b: "bld-rec-00002 (Host Ubuntu24)";
+    in property <string> diag_target_a: "Build A (Windows 11 AMD64)";
+    in property <string> diag_target_b: "Build B (Windows 11 AMD64)";
     in property <string> diag_verdict: "normalized_reproducible";
     in property <string> diag_cri: "0.88";
+    in property <string> diag_content_ratio: "1.00";
+    in property <string> diag_metadata_ratio: "0.75";
     in property <[DiffEntry]> diff_entries: [];
+    in property <[DiagnosticFindingItem]> diagnostic_findings: [];
+
+    // Causality Graph Properties
+    in property <[GraphNodeItem]> graph_nodes: [];
+    in property <[GraphEdgeItem]> graph_edges: [];
+    in-out property <int> selected_graph_node: 0;
+    in property <string> dot_source: "";
+
+    // Perturbation Properties
+    in property <[PerturbationParam]> perturbation_params: [];
+    in property <[SensitivityResult]> perturbation_results: [];
+    in property <bool> is_perturbation_running: false;
+    in property <string> perturbation_summary: "Ready to execute single-variable perturbation matrix.";
+
+    // Passport Properties
+    in property <string> passport_id: "rf-pass-9a8f2c";
+    in property <string> passport_artifact_name: "reproforge-core-0.1.0-py3-none-any.whl";
+    in property <string> passport_sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    in property <string> passport_schema_version: "reproforge-passport-v1.0.json";
+    in property <string> passport_timestamp: "2026-11-23T12:00:00Z";
+    in property <string> passport_host_kernel: "Windows 11 AMD64 (NT 10.0.26100)";
+    in property <string> passport_toolchain_digest: "python=3.14.7,wheel=0.45.1,flit_core=3.11.0";
+    in property <string> passport_verification_status: "VERIFIED_BIT_FOR_BIT";
+    in property <string> passport_json: "";
+
+    // Remediation Properties
+    in property <[RemediationProposal]> remediation_proposals: [];
+    in-out property <int> selected_remediation_proposal: 0;
+    in property <string> remediation_verification_status: "Awaiting remediation action";
+    in property <bool> is_remediation_verifying: false;
 
     // Callbacks to Native Rust Host
     callback refresh_requested();
@@ -80,6 +128,23 @@ export component MainWindow inherits Window {
     callback trigger_build_requested();
     callback cancel_build_requested();
 
+    // Causality Callbacks
+    callback graph_node_selected(int);
+    callback refresh_graph_requested();
+    callback export_dot_requested();
+
+    // Perturbation Callbacks
+    callback run_perturbation_campaign_requested();
+
+    // Passport Callbacks
+    callback export_passport_json_requested();
+    callback export_passport_md_requested();
+
+    // Remediation Callbacks
+    callback remediation_proposal_selected(int);
+    callback approve_patch_requested(string);
+    callback run_verification_rebuild_requested();
+
     // Keyboard Shortcuts Interceptor
     forward-focus: key_handler;
     key_handler := FocusScope {
@@ -90,6 +155,10 @@ export component MainWindow inherits Window {
                 if (event.text == "3") { root.active_tab = 2; return accept; }
                 if (event.text == "4") { root.active_tab = 3; return accept; }
                 if (event.text == "5") { root.active_tab = 4; return accept; }
+                if (event.text == "6") { root.active_tab = 5; return accept; }
+                if (event.text == "7") { root.active_tab = 6; return accept; }
+                if (event.text == "8") { root.active_tab = 7; return accept; }
+                if (event.text == "9") { root.active_tab = 8; return accept; }
                 if (event.text == "r") { root.refresh_requested(); return accept; }
             }
             if (event.text == "Escape" && root.is_about_open) {
@@ -180,10 +249,61 @@ export component MainWindow inherits Window {
                     target_b: root.diag_target_b;
                     primary_verdict: root.diag_verdict;
                     cri_score: root.diag_cri;
+                    content_ratio: root.diag_content_ratio;
+                    metadata_ratio: root.diag_metadata_ratio;
                     diff_entries: root.diff_entries;
+                    diagnostic_findings: root.diagnostic_findings;
                 }
 
-                if root.active_tab == 4 : SettingsView {
+                if root.active_tab == 4 : CausalityGraphView {
+                    nodes: root.graph_nodes;
+                    edges: root.graph_edges;
+                    selected_node_index: root.selected_graph_node;
+                    dot_source: root.dot_source;
+                    node_selected(idx) => {
+                        root.selected_graph_node = idx;
+                        root.graph_node_selected(idx);
+                    }
+                    refresh_graph_requested => { root.refresh_graph_requested(); }
+                    export_dot_requested => { root.export_dot_requested(); }
+                }
+
+                if root.active_tab == 5 : PerturbationView {
+                    parameters: root.perturbation_params;
+                    results: root.perturbation_results;
+                    is_running: root.is_perturbation_running;
+                    campaign_summary: root.perturbation_summary;
+                    run_campaign_requested => { root.run_perturbation_campaign_requested(); }
+                }
+
+                if root.active_tab == 6 : PassportView {
+                    passport_id: root.passport_id;
+                    artifact_name: root.passport_artifact_name;
+                    sha256_hash: root.passport_sha256;
+                    schema_version: root.passport_schema_version;
+                    timestamp: root.passport_timestamp;
+                    host_kernel: root.passport_host_kernel;
+                    toolchain_digest: root.passport_toolchain_digest;
+                    verification_status: root.passport_verification_status;
+                    passport_json: root.passport_json;
+                    export_json_requested => { root.export_passport_json_requested(); }
+                    export_markdown_requested => { root.export_passport_md_requested(); }
+                }
+
+                if root.active_tab == 7 : RemediationView {
+                    proposals: root.remediation_proposals;
+                    selected_proposal_index: root.selected_remediation_proposal;
+                    verification_status: root.remediation_verification_status;
+                    is_verifying: root.is_remediation_verifying;
+                    proposal_selected(idx) => {
+                        root.selected_remediation_proposal = idx;
+                        root.remediation_proposal_selected(idx);
+                    }
+                    approve_patch_requested(id) => { root.approve_patch_requested(id); }
+                    run_verification_rebuild_requested => { root.run_verification_rebuild_requested(); }
+                }
+
+                if root.active_tab == 8 : SettingsView {
                     motion_enabled: root.motion_enabled;
                     active_backend: root.active_backend;
                     is_software_renderer: root.is_software_renderer;

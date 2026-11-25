@@ -38,6 +38,7 @@ class GitRepositoryManager:
             result = subprocess.run(
                 full_cmd,
                 cwd=str(cwd) if cwd else None,
+                stdin=subprocess.DEVNULL,
                 capture_output=True,
                 text=True,
                 check=False,

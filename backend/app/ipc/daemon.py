@@ -4,9 +4,10 @@ import asyncio
 import io
 import os
 import sys
+import threading
 import traceback
-from typing import Optional
-from backend.app.database.session import AsyncSessionLocal
+from typing import Any, Dict, Optional, Set
+from backend.app.database.session import AsyncSessionLocal, init_db
 from backend.app.ipc.dispatcher import RequestDispatcher
 from backend.app.ipc.protocol import (
     JsonRpcErrorCode,
@@ -26,6 +27,8 @@ class IpcDaemon:
         self.log_to_file = log_to_file
         self._ipc_writer: Optional[io.TextIOWrapper] = None
         self._real_stdout_fd: Optional[int] = None
+        self._write_lock = threading.Lock()
+        self._inflight_tasks: Set[asyncio.Task] = set()
 
     def notify_client(self, method: str, params: Dict[str, Any]) -> None:
         """Send asynchronous JSON-RPC notification to connected client."""
@@ -55,13 +58,31 @@ class IpcDaemon:
 
     def write_ipc_message(self, line: str) -> None:
         """Write single-line JSONL message directly to isolated IPC stream."""
-        if self._ipc_writer:
-            self._ipc_writer.write(line)
-            self._ipc_writer.flush()
+        with self._write_lock:
+            if self._ipc_writer:
+                self._ipc_writer.write(line)
+                self._ipc_writer.flush()
+
+    async def _dispatch_and_reply(self, request: Any) -> None:
+        """Execute a single dispatched RPC request concurrently without blocking stdin."""
+        try:
+            response = await self.dispatcher.dispatch(request)
+            if response is not None:
+                self.write_ipc_message(encode_message(response))
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            sys.stderr.write(f"[IpcDaemon] Unhandled dispatch error for {request.method}: {exc}\n{traceback.format_exc()}\n")
 
     async def run(self) -> None:
         """Run the daemon async loop."""
         self._setup_stdout_isolation()
+
+        # Ensure schema tables exist on clean/ephemeral databases
+        try:
+            await init_db()
+        except Exception as exc:
+            sys.stderr.write(f"[IpcDaemon] Warning during DB init: {exc}\n")
 
         # Step 1: Reconcile any orphaned active builds from past engine crashes
         try:
@@ -103,15 +124,24 @@ class IpcDaemon:
                     self.write_ipc_message(encode_message(err_resp))
                     continue
 
-                # Dispatch
-                response = await self.dispatcher.dispatch(request)
-                if response is not None:
-                    self.write_ipc_message(encode_message(response))
+                # Dispatch concurrently so heartbeats and cancellations are never blocked by builds
+                if request.method == "system.shutdown":
+                    await self._dispatch_and_reply(request)
+                else:
+                    task = asyncio.create_task(self._dispatch_and_reply(request))
+                    self._inflight_tasks.add(task)
+                    task.add_done_callback(self._inflight_tasks.discard)
 
             except asyncio.CancelledError:
                 break
             except Exception as exc:
                 sys.stderr.write(f"[IpcDaemon] Error processing request: {exc}\n{traceback.format_exc()}\n")
+
+        # Cleanup any inflight background tasks on shutdown
+        if self._inflight_tasks:
+            for t in list(self._inflight_tasks):
+                t.cancel()
+            await asyncio.gather(*self._inflight_tasks, return_exceptions=True)
 
         sys.stderr.write(f"[IpcDaemon] Engine Daemon (PID {os.getpid()}) exiting cleanly.\n")
 

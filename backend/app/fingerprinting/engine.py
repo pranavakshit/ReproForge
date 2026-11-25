@@ -81,6 +81,7 @@ class EnvironmentFingerprintEngine:
                 return None
             result = subprocess.run(
                 cmd,
+                stdin=subprocess.DEVNULL,
                 capture_output=True,
                 text=True,
                 timeout=5,
