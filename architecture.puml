@@ -1,76 +1,130 @@
 @startuml
 title ReproForge: Cross-Environment Software Build Reproducibility and Diagnostic Framework
 
-skinparam backgroundColor #FAFAFA
-skinparam componentStyle uml2
+skinparam backgroundColor #090D16
+skinparam componentStyle rectangle
 skinparam packageStyle rectangle
+skinparam defaultFontColor #F1F5F9
+skinparam defaultFontName "Segoe UI"
+skinparam ArrowThickness 1.8
 
-package "Presentation & Client Layer" as PresentationPkg {
-  [Native Rust Desktop UI (Slint v1.19.0)] as DesktopApp
-  [Rust Child Process Supervisor & Client] as RustSupervisor
-  [ReproForge CLI Application] as CliApp
-  [Optional Headless API (FastAPI / Automation)] as HeadlessApi
+skinparam package {
+  BackgroundColor #0F1623
+  BorderColor #27354F
+  FontColor #93C5FD
 }
 
-package "Engine Daemon & Dispatcher Layer" as DaemonPkg {
-  [Python Background Engine Daemon (JSON-RPC 2.0 Stdio)] as EngineDaemon
+skinparam component {
+  BackgroundColor #141D2F
+  BorderColor #3B82F6
+  FontColor #F1F5F9
 }
 
-package "Shared Application Service Layer" as ServicesPkg {
-  [Repository Service] as RepoService
-  [Fingerprint Service] as FpService
-  [Build Execution Service] as BuildService
-  [Artifact Comparison Service] as CompService
-  [Diagnostic & Remediation Service] as DiagService
-  [Overview & Telemetry Service] as OverviewService
+skinparam database {
+  BackgroundColor #121A2A
+  BorderColor #10B981
+  FontColor #6EE7B7
 }
 
-package "Execution & Orchestration Layer" as ExecutionPkg {
-  [Git Repository Manager] as GitManager
-  [Multi-Repository & Revision Seeder] as RepoSeeder
-  [Build Configuration Detector] as Detector
-  [Workspace & Sandbox Manager] as WorkspaceMgr
-  [Local Sandbox & Docker Runner] as RunnerBackend
-  [Artifact Discovery & Hasher Collector] as Collector
+actor "Developer / Researcher" as User
+
+package "Native Desktop Shell (desktop/)" {
+  [Slint Obsidian UI\n(9 Vector Views + ListView)] as SlintUI
+  [Native OS Folder Picker\n& Workspace Checklist (rfd)] as FolderPicker
+  [Rust App State & Batched Logs\n(desktop/src/main.rs)] as RustApp
+  [ProcessSupervisor Watchdog\n& Crash Auto-Restart] as Watchdog
+  [Stdio JSON-RPC Client] as IpcClient
 }
 
-package "Differential & Diagnostic Engine" as AnalysisPkg {
-  [Dual-Mode Normalizer (Strict vs Normalized)] as Normalizer
-  [Structural Differential Diff Engine] as DiffEngine
-  [Rule-Based Diagnostic Engine (11 Rules)] as DiagRules
-  [Remediation Generator (3-Tier Guidance)] as RemediationGen
-  [Reproducibility Assessment & CRI Scorer] as Scorer
+package "Entry Adapters (Python)" {
+  [Click CLI\n(reproforge)] as Cli
+  [IpcDaemon & RequestDispatcher\n(Concurrent asyncio Tasks)] as IpcDaemon
+  [Optional Headless FastAPI\n(backend/app/api/app.py)] as HeadlessApi
+  [Portable Launchers\n(reproforge.bat / .ps1 / .sh)] as Launchers
 }
 
-package "Durable Persistence Layer" as PersistencePkg {
-  [Async Repositories & Crash Reconciler] as Repositories
-  database "SQLite WAL Database (aiosqlite Engine)" as SqliteDb
+package "Shared Application Services (backend/app/services/)" {
+  [OverviewService] as SvcOverview
+  [RepositoryService] as SvcRepo
+  [BuildService] as SvcBuild
+  [ComparisonService] as SvcComp
+  [FingerprintService] as SvcFp
+  [CausalityGraphService] as SvcGraph
+  [PerturbationService] as SvcPerturb
+  [PassportService\n(v1.0 Schema + Redaction)] as SvcPassport
+  [RemediationEngine\n(3-Tier Disposable Verify)] as SvcRemediation
+  [ReportExporter\n(JSON / CSV / HTML)] as Reporting
 }
 
-' Distinct unique arrow colors for every individual connection
-DesktopApp -[#1E88E5]-> RustSupervisor : 1. Thread-safe UI State & Event Dispatch
-RustSupervisor -[#00897B]-> EngineDaemon : 2. Isolated Stdio JSON-RPC 2.0 with Heartbeat & Auto-Restart
-EngineDaemon -[#D81B60]-> ServicesPkg : 3. Dispatches Asynchronous Requests to Services
-CliApp -[#8E24AA]-> ServicesPkg : 4. Direct Python Async Invocations
-HeadlessApi -[#3949AB]-> ServicesPkg : 5. Remote Ingestion Endpoints
-RepoService -[#00ACC1]-> GitManager : 6. Pinned Commit Resolution & Clean Export
-FpService -[#2E7D32]-> Repositories : 7. Telemetry Capture & Canonical Fingerprints
-BuildService -[#43A047]-> Detector : 8. Auto-detects Build Systems & Lockfiles
-BuildService -[#7CB342]-> WorkspaceMgr : 9. Allocates Isolated Build Workspaces
-BuildService -[#C0CA33]-> RunnerBackend : 10. Executes Sandboxed Subprocesses
-RunnerBackend -[#FDD835]-> Collector : 11. Discovers & Stream-hashes Build Artifacts
-Collector -[#FFB300]-> Repositories : 12. Persists Strict SHA-256 Digest Records
-CompService -[#FB8C00]-> Normalizer : 13. Normalizes Timestamps, Perms & Gzip Headers
-CompService -[#F4511E]-> DiffEngine : 14. Executes Recursive Archive & File Diffs
-DiffEngine -[#6D4C41]-> DiagRules : 15. Feeds Structural Findings & Content Diffs
-DiagRules -[#546E7A]-> RemediationGen : 16. Generates Recommendation-only Guidance
-DiagRules -[#E53935]-> Scorer : 17. Provides Classified Failure Evidence
-Scorer -[#880E4F]-> CompService : 18. Produces Metric Vector & Categorical Verdict
-CompService -[#4A148C]-> Repositories : 19. Persists Comparisons, Findings & Verdicts
-BuildService -[#0D47A1]-> Repositories : 20. Tracks Build Lifecycle & Post-Crash Recovery
-Repositories -[#1B5E20]-> SqliteDb : 21. Atomic WAL Commits with Busy Timeout
-EngineDaemon -[#004D40]-> RustSupervisor : 22. Asynchronous Notification Stream (build.progress, build.log_chunk, build.completed)
-OverviewService -[#BF360C]-> Repositories : 23. Aggregates WAL Build Metrics & Host Telemetry
-RepoSeeder -[#283593]-> GitManager : 24. Extracts Live Git Revisions across Local Repos
-RepoSeeder -[#4E342E]-> Repositories : 25. Synchronizes Authentic Repositories & Commits
+package "Orchestration, Execution & Fingerprinting" {
+  [GitRepositoryManager\n(Archive + Remotes + Discovery)] as GitMgr
+  [BuildConfigurationDetector\n(Py/Node/Rust/Go/Docker/CI)] as Detector
+  [GitHubAutoScanner\n(Static + Read-Only Metadata)] as GhScanner
+  [EnvironmentFingerprintEngine] as FpEngine
+  [LocalSandboxBackend\n(Allowlisted Env)] as LocalSandbox
+  [DockerBuildBackend\n(--network=none + Resource Caps)] as DockerBackend
+  [WorkspaceManager & ArtifactCollector] as Collector
+}
+
+package "Normalization, Diagnostics & Scoring" {
+  [ArtifactHasher & ArchiveUnpacker\n(Tar/Zip/Wheel/OCI Inspector)] as Unpacker
+  [ArtifactNormalizer\n(& Audit Rule Records)] as Normalizer
+  [StructuralDiffEngine\n(& Diff Snippets)] as DiffEngine
+  [DiagnosticEngine\n(11 Rules + Unknown Fallback)] as DiagEngine
+  [ReproducibilityCalculator\n(Vector Verdict + Secondary CRI)] as Calculator
+}
+
+database "SQLite WAL + Alembic\n(data/reproforge.db)" as Db
+database "Artifacts, Passports &\nDisposable Workspaces" as ArtifactStore
+cloud "GitHub Read-Only API\n& git ls-remote" as GitHubCloud
+package "Benchmarks (experiments/benchmarks/)" {
+  [10-Scenario §10 Suite &\nSlint Footprint Harness] as BenchSuite
+}
+
+User -[#3B82F6]-> Launchers : launches
+Launchers -[#22D3EE]-> RustApp : starts release binary
+User -[#10B981]-> SlintUI : interacts
+User -[#F59E0B]-> Cli : CLI workflows
+SlintUI -[#EC4899]-> FolderPicker : pick repo/workspace
+FolderPicker -[#8B5CF6]-> RustApp : selected path
+RustApp -[#06B6D4]-> Watchdog : supervises daemon
+Watchdog -[#14B8A6]-> IpcClient : manages channel
+IpcClient -[#F97316]-> IpcDaemon : JSON-RPC stdio
+Cli -[#84CC16]-> SvcBuild : direct calls
+Cli -[#EAB308]-> SvcRepo : repo add / scan
+HeadlessApi -[#6366F1]-> SvcOverview : optional REST
+HeadlessApi -[#A855F7]-> SvcComp : export & query
+
+IpcDaemon -[#60A5FA]-> SvcOverview : dispatch
+IpcDaemon -[#34D399]-> SvcRepo : scan & batch
+IpcDaemon -[#FBBF24]-> SvcBuild : stream & cancel
+IpcDaemon -[#F87171]-> SvcComp : compare
+IpcDaemon -[#C084FC]-> SvcGraph : DAG JSON/DOT
+IpcDaemon -[#FB7185]-> SvcPerturb : delta campaign
+IpcDaemon -[#2DD4BF]-> SvcPassport : export audit
+IpcDaemon -[#A3E635]-> SvcRemediation : approve & test
+IpcDaemon -[#38BDF8]-> SvcFp : probe host
+
+SvcRepo -[#818CF8]-> GitMgr : inspect & archive
+SvcRepo -[#F472B6]-> Detector : detect stack & CI
+SvcRepo -[#4ADE80]-> GhScanner : static audit
+GhScanner -[#FACC15]-> GitHubCloud : metadata only
+SvcBuild -[#FB923C]-> FpEngine : capture host env
+SvcBuild -[#E879F9]-> LocalSandbox : restricted fallback
+SvcBuild -[#0EA5E9]-> DockerBackend : isolated container
+SvcBuild -[#16A34A]-> Collector : harvest artifacts
+SvcComp -[#D946EF]-> Unpacker : unpack & OCI layers
+Unpacker -[#F43F5E]-> Normalizer : canonicalize
+Normalizer -[#0D9488]-> DiffEngine : compute structural delta
+DiffEngine -[#CA8A04]-> DiagEngine : evaluate rules
+DiagEngine -[#9333EA]-> Calculator : score CRI & verdict
+SvcPerturb -[#0284C7]-> LocalSandbox : single-var delta
+SvcRemediation -[#DC2626]-> Collector : disposable copy check
+SvcComp -[#65A30D]-> Reporting : JSON / CSV / HTML
+SvcPassport -[#2563EB]-> SvcPerturb : attach evidence
+SvcGraph -[#7C3AED]-> Db : query causal links
+SvcOverview -[#059669]-> Db : aggregate metrics
+Collector -[#DB2777]-> ArtifactStore : store outputs & logs
+BenchSuite -[#EA580C]-> DiffEngine : §10 benchmark evaluation
+
 @enduml
