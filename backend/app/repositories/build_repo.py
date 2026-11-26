@@ -73,14 +73,25 @@ class BuildRepository(BaseRepository[BuildExecutionModel]):
             exit_code=-1,
         )
 
+    async def list_all(self, limit: int = 100, offset: int = 0) -> List[BuildExecutionModel]:
+        """List all builds sorted newest-to-oldest deterministically."""
+        stmt = (
+            select(BuildExecutionModel)
+            .order_by(BuildExecutionModel.started_at.desc(), BuildExecutionModel.id.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
     async def list_by_repository(
         self, repository_id: str, limit: int = 50, offset: int = 0
     ) -> List[BuildExecutionModel]:
-        """List builds associated with a specific repository."""
+        """List builds associated with a specific repository newest-to-oldest."""
         stmt = (
             select(BuildExecutionModel)
             .where(BuildExecutionModel.repository_id == repository_id)
-            .order_by(BuildExecutionModel.started_at.desc())
+            .order_by(BuildExecutionModel.started_at.desc(), BuildExecutionModel.id.desc())
             .limit(limit)
             .offset(offset)
         )

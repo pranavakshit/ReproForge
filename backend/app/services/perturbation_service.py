@@ -68,8 +68,8 @@ DEFAULT_PERTURBATION_PARAMS: List[PerturbationParameter] = [
     PerturbationParameter(
         name="TZ",
         baseline_val="UTC",
-        perturbed_val="America/New_York",
-        description="Timezone offset affecting local wall-clock timestamp formatting",
+        perturbed_val="Asia/Kolkata",
+        description="Timezone offset (+05:30 IST vs UTC) affecting local wall-clock timestamp formatting",
     ),
     PerturbationParameter(
         name="LC_ALL",
@@ -334,15 +334,16 @@ class PerturbationService:
         commit_ref: str = "HEAD",
         param_names: Optional[List[str]] = None,
         execute_real_builder: bool = False,
+        param_overrides: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """Run single-variable delta experiments and return sensitivity matrix."""
         if self._session is not None:
             return await self._run_campaign_with_session(
-                self._session, repository_id, commit_ref, param_names, execute_real_builder
+                self._session, repository_id, commit_ref, param_names, execute_real_builder, param_overrides
             )
         async with AsyncSessionLocal() as session:
             return await self._run_campaign_with_session(
-                session, repository_id, commit_ref, param_names, execute_real_builder
+                session, repository_id, commit_ref, param_names, execute_real_builder, param_overrides
             )
 
     async def _run_campaign_with_session(
@@ -352,6 +353,7 @@ class PerturbationService:
         commit_ref: str,
         param_names: Optional[List[str]],
         execute_real_builder: bool,
+        param_overrides: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         stmt = select(RepositoryModel).where(RepositoryModel.id == repository_id)
         repo = (await session.execute(stmt)).scalar_one_or_none()
@@ -367,13 +369,32 @@ class PerturbationService:
         sys_name = detected[0].system_type if detected else "generic"
         build_cmd = detected[0].suggested_build_command if (execute_real_builder and detected) else None
 
+        override_map: Dict[str, Dict[str, Any]] = {
+            str(item.get("name")): item for item in (param_overrides or []) if item.get("name")
+        }
+        effective_params: List[PerturbationParameter] = []
+        for default_p in DEFAULT_PERTURBATION_PARAMS:
+            ov = override_map.get(default_p.name)
+            if ov:
+                effective_params.append(
+                    PerturbationParameter(
+                        name=default_p.name,
+                        baseline_val=str(ov.get("baseline_val", default_p.baseline_val) or default_p.baseline_val),
+                        perturbed_val=str(ov.get("perturbed_val", default_p.perturbed_val) or default_p.perturbed_val),
+                        description=default_p.description,
+                        enabled=bool(ov.get("enabled", default_p.enabled)),
+                    )
+                )
+            else:
+                effective_params.append(default_p.model_copy())
+
         active_params = [
             p
-            for p in DEFAULT_PERTURBATION_PARAMS
+            for p in effective_params
             if p.enabled and (not param_names or p.name in param_names)
         ]
 
-        baseline_env = {p.name: p.baseline_val for p in DEFAULT_PERTURBATION_PARAMS}
+        baseline_env = {p.name: p.baseline_val for p in effective_params}
         campaign_id = f"camp-{uuid.uuid4().hex[:8]}"
         baseline_sha = await self._run_arm(
             repo_path, commit_sha, build_cmd, sys_name, f"{campaign_id}-base", baseline_env
@@ -381,6 +402,8 @@ class PerturbationService:
 
         results: List[SensitivityResult] = []
         for idx, param in enumerate(active_params):
+            if param.baseline_val == param.perturbed_val:
+                continue
             arm_env = dict(baseline_env)
             arm_env[param.name] = param.perturbed_val
             self.validate_single_variable_delta(baseline_env, arm_env, param.name)
@@ -397,7 +420,7 @@ class PerturbationService:
             impact = (
                 f"Changing {param.name} ({param.baseline_val} -> {param.perturbed_val}) altered primary artifact digest."
                 if hash_changed
-                else f"Artifact digest invariant under single-variable {param.name} perturbation."
+                else f"Artifact digest invariant under single-variable {param.name} ({param.baseline_val} -> {param.perturbed_val}) perturbation."
             )
 
             promoted = 0
@@ -426,8 +449,10 @@ class PerturbationService:
             "repository_name": repo.name,
             "commit_sha": commit_sha,
             "build_system": sys_name,
+            "execute_real_builder": execute_real_builder,
             "baseline_sha256": baseline_sha,
             "created_at": datetime.now(timezone.utc).isoformat(),
+            "params_used": [p.model_dump() for p in effective_params],
             "results": [r.model_dump() for r in results],
         }
         self._save_campaign(record)

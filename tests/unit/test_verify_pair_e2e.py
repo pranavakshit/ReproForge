@@ -20,6 +20,8 @@ async def test_track_repo_verify_pair_and_inspect_all_views_e2e(tmp_path: Path):
     subprocess.run(["git", "commit", "-m", "initial app"], cwd=repo_dir, check=True, capture_output=True)
 
     dispatcher = RequestDispatcher()
+    captured_notifications = []
+    dispatcher.on_notify = lambda m, p: captured_notifications.append((m, p))
 
     # 1. Register repo
     reg = await dispatcher.dispatch(
@@ -32,15 +34,17 @@ async def test_track_repo_verify_pair_and_inspect_all_views_e2e(tmp_path: Path):
     repo_id = reg.result["id"]
     assert reg.result["name"] == "demo_app"
 
-    # 2. Verify reproducibility pair (2 isolated .venv builds + ComparisonService)
+    # 2. Verify reproducibility pair (with source_only dependency_mode check + progress build_id scoping)
     verify = await dispatcher.dispatch(
         JsonRpcRequest(
             id=2,
             method="build.verify_pair",
-            params={"repository_id": repo_id, "backend_type": "local"},
+            params={"repository_id": repo_id, "backend_type": "local", "dependency_mode": "source_only"},
         )
     )
     assert verify.result["comparison_id"] is not None
+    progress_events = [p for m, p in captured_notifications if m == "build.progress"]
+    assert progress_events and all(pe.get("build_id") for pe in progress_events)
     assert verify.result["verdict"] in {
         "BIT_FOR_BIT_REPRODUCIBLE",
         "NORMALIZED_REPRODUCIBLE",
@@ -83,3 +87,27 @@ async def test_track_repo_verify_pair_and_inspect_all_views_e2e(tmp_path: Path):
     rv = await dispatcher.dispatch(JsonRpcRequest(id=8, method="repository.get_revisions", params={"repository_id": repo_id}))
     assert rv.result["revisions"][0]["sha"] != "HEAD"
     assert rv.result["revisions"][0]["message"] == "initial app"
+
+    # 7. CLI Parity IPC routes: fingerprint.capture, comparison.compare_paths, comparison.export_report
+    fp_res = await dispatcher.dispatch(JsonRpcRequest(id=9, method="fingerprint.capture", params={}))
+    assert fp_res.result["fingerprint_hash"]
+    assert "system_info" in fp_res.result["json_pretty"]
+
+    f1 = tmp_path / "art_1.txt"
+    f2 = tmp_path / "art_2.txt"
+    f1.write_text("identical bytes", encoding="utf-8")
+    f2.write_text("identical bytes", encoding="utf-8")
+    cmp_paths = await dispatcher.dispatch(
+        JsonRpcRequest(id=10, method="comparison.compare_paths", params={"path_a": str(f1), "path_b": str(f2)})
+    )
+    assert cmp_paths.result["verdict"] == "BIT_FOR_BIT_REPRODUCIBLE"
+
+    exp_res = await dispatcher.dispatch(
+        JsonRpcRequest(
+            id=11,
+            method="comparison.export_report",
+            params={"comparison_id": verify.result["comparison_id"], "format": "html"},
+        )
+    )
+    assert Path(exp_res.result["file_path"]).is_file()
+    assert exp_res.result["bytes"] > 100

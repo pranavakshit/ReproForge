@@ -1,5 +1,6 @@
 """Shared application service for isolated build execution, artifact collection, and persistence."""
 
+import base64
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -71,6 +72,7 @@ class BuildService:
         timeout_seconds: int = 1200,
         build_id: Optional[str] = None,
         project_name: str = "default",
+        dependency_mode: str = "full",
         on_output_chunk: Optional[Callable[[str], None]] = None,
     ) -> BuildServiceOutcome:
         """Execute a full build run and persist execution record and collected artifacts."""
@@ -86,6 +88,7 @@ class BuildService:
                 timeout_seconds,
                 bid,
                 project_name,
+                dependency_mode,
                 on_output_chunk,
             )
 
@@ -100,6 +103,7 @@ class BuildService:
                     timeout_seconds,
                     bid,
                     project_name,
+                    dependency_mode,
                     on_output_chunk,
                 )
 
@@ -113,6 +117,7 @@ class BuildService:
         timeout_seconds: int,
         build_id: str,
         project_name: str,
+        dependency_mode: str = "full",
         on_output_chunk: Optional[Callable[[str], None]] = None,
     ) -> BuildServiceOutcome:
         proj_repo = ProjectRepository(session)
@@ -148,21 +153,27 @@ class BuildService:
 
         # 4. Detect build configuration
         systems = self.detector.detect(repo_path)
+        has_dockerfile = (repo_path / "Dockerfile").is_file() or (repo_path / "Containerfile").is_file()
         primary_cmd = systems[0].suggested_build_command if systems else "make"
-        if not custom_cmd and backend_type == "local" and primary_cmd in {
+        if not custom_cmd and primary_cmd in {
             "python -m build",
             "pip wheel -r requirements.txt -w dist/",
-        }:
-            # Run deterministically inside the repo's isolated .venv without multi-GB PyPI downloads
-            build_cmd = (
-                'python -c "import importlib.util, pathlib, subprocess, sys; '
-                'has_toml = pathlib.Path(\'pyproject.toml\').exists() or pathlib.Path(\'setup.py\').exists(); '
-                'has_b = importlib.util.find_spec(\'build\') is not None; '
-                'rc = 0 if not has_toml else (subprocess.call([sys.executable, \'-m\', \'build\', \'--no-isolation\']) if has_b '
-                'else subprocess.call([sys.executable, \'-m\', \'pip\', \'wheel\', \'--no-deps\', \'--no-build-isolation\', \'-w\', \'dist/\', \'.\'])); '
-                'rc2 = 0 if (has_toml and rc == 0) else subprocess.call([sys.executable, \'-m\', \'compileall\', \'-q\', \'-x\', \'(\\\\.git|\\\\.venv)\', \'.\']); '
-                'sys.exit(0 if (rc == 0 or rc2 == 0) else rc2)"'
+        } and (backend_type == "local" or not has_dockerfile):
+            # Cross-platform deterministic Python packager/compiler (safe under both Windows cmd and Linux /bin/sh)
+            py_script = (
+                "import importlib.util, pathlib, subprocess, sys\n"
+                "has_toml = pathlib.Path('pyproject.toml').exists() or pathlib.Path('setup.py').exists()\n"
+                "has_b = importlib.util.find_spec('build') is not None\n"
+                "rc = 0\n"
+                "if has_toml:\n"
+                "    cmd = [sys.executable, '-m', 'build', '--no-isolation'] if has_b else [sys.executable, '-m', 'pip', 'wheel', '--no-deps', '--no-build-isolation', '-w', 'dist/', '.']\n"
+                "    rc = subprocess.call(cmd)\n"
+                "rc2 = 0 if (has_toml and rc == 0) else subprocess.call([sys.executable, '-m', 'compileall', '-x', r'(\\.git|\\.venv|dist)', '.'])\n"
+                "print('[ReproForge Python Build] Completed packaging/compilation cleanly')\n"
+                "sys.exit(0 if (rc == 0 or rc2 == 0) else rc2)\n"
             )
+            encoded = base64.b64encode(py_script.encode("utf-8")).decode("ascii")
+            build_cmd = f'python -c "exec(__import__(\'base64\').b64decode(\'{encoded}\').decode())"' if backend_type == "local" else f"python -c \"exec(__import__('base64').b64decode('{encoded}').decode())\""
         else:
             build_cmd = custom_cmd or primary_cmd
 
@@ -195,6 +206,7 @@ class BuildService:
             build_command=build_cmd,
             timeout_seconds=timeout_seconds,
             on_output_chunk=on_output_chunk,
+            dependency_mode=dependency_mode,
         )
 
         # 8. Update execution status in DB

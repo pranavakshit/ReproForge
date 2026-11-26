@@ -132,5 +132,13 @@ async def test_causality_graph_service_seeded_comparison():
     node_types = {n["node_type"] for n in graph["nodes"]}
     assert {"comparison", "build", "revision", "fingerprint", "diff", "rule", "remediation"}.issubset(node_types)
     valid_epistemics = {"OBSERVED", "INFERRED", "HYPOTHESIS", "EXPERIMENTALLY_VALIDATED"}
+    relations = {e["relation"] for e in graph["edges"]}
+    assert "EVIDENCED_BY" in relations
     for edge in graph["edges"]:
         assert edge["epistemic_status"] in valid_epistemics
+        assert edge["source_id"] == edge["source"]
+        assert edge["target_id"] == edge["target"]
+        assert edge["source_label"]
+        assert edge["target_label"]
+        assert edge["evidence"]
+    assert "digraph BuildDriftCausalityGraph" in graph["dot_source"]

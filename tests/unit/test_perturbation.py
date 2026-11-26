@@ -123,3 +123,22 @@ async def test_perturbation_campaign_promotes_finding_epistemic_status(tmp_path:
         assert refreshed is not None
         assert refreshed.confidence == ConfidenceLevel.HIGH.value
         assert EpistemicStatus.EXPERIMENTALLY_VALIDATED.value in str(refreshed.evidence_trail).lower()
+
+    # Verify localized Asia/Kolkata TZ preset and custom param_overrides filtering
+    defaults = {p["name"]: p for p in PerturbationService.list_default_parameters()}
+    assert defaults["TZ"]["perturbed_val"] == "Asia/Kolkata"
+
+    override_camp = await service.run_campaign(
+        repository_id="repo-p1",
+        param_overrides=[
+            {"name": "SOURCE_DATE_EPOCH", "baseline_val": "1700000000", "perturbed_val": "1710000000", "enabled": True},
+            {"name": "TZ", "baseline_val": "UTC", "perturbed_val": "Asia/Kolkata", "enabled": False},
+            {"name": "LC_ALL", "enabled": False},
+            {"name": "UMASK", "enabled": False},
+            {"name": "PYTHONHASHSEED", "enabled": False},
+        ],
+        execute_real_builder=False,
+    )
+    assert len(override_camp["results"]) == 1
+    assert override_camp["results"][0]["param_name"] == "SOURCE_DATE_EPOCH"
+    assert override_camp["results"][0]["hash_changed"] is True

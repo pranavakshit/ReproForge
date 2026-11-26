@@ -103,25 +103,53 @@ async def test_local_sandbox_uses_repo_isolated_venv_not_host_venv(tmp_path: Pat
 
 
 @pytest.mark.asyncio
-async def test_docker_backend_falls_back_gracefully_without_dockerfile(tmp_path: Path, monkeypatch):
-    """Verify DockerBuildBackend falls back to per-repo .venv sandbox instead of failing on missing Dockerfile."""
+async def test_docker_backend_runs_container_and_pulls_logs_before_rm(tmp_path: Path, monkeypatch):
+    """Verify DockerBuildBackend never creates host .venv, uses --network=none without --rm, and pulls docker logs + inspect before docker rm -f."""
     from backend.app.execution.runner import DockerBuildBackend
 
     source_dir = tmp_path / "no_dockerfile_repo" / "source"
     source_dir.mkdir(parents=True, exist_ok=True)
+    (source_dir / "main.py").write_text("print('hello')\n", encoding="utf-8")
+
+    call_sequence = []
 
     monkeypatch.setattr("shutil.which", lambda name: "docker" if name == "docker" else None)
-    monkeypatch.setattr(DockerBuildBackend, "_find_cached_python_image", staticmethod(lambda: None))
+    monkeypatch.setattr(DockerBuildBackend, "_find_cached_python_image", staticmethod(lambda: "python:3.11-slim"))
+    monkeypatch.setattr(DockerBuildBackend, "_image_exists_locally", staticmethod(lambda tag: True))
+
+    async def fake_stream(build_id, cmd_or_args, cwd, env, log_fp, timeout_seconds, on_output_chunk=None, use_shell=True):
+        call_sequence.append(("run", list(cmd_or_args)))
+        log_fp.write("Container build stdout\n")
+        return BuildStatus.COMPLETED, 0, None
+
+    async def fake_pull_logs(ctr_name, log_fp, on_output_chunk=None):
+        call_sequence.append(("logs_and_inspect", ctr_name))
+        log_fp.write(f"Pulled log for {ctr_name}\n")
+        return {"container_name": ctr_name, "exit_code": 0}
+
+    async def fake_rm(ctr_name, log_fp):
+        call_sequence.append(("rm", ctr_name))
+
+    monkeypatch.setattr("backend.app.execution.runner._stream_subprocess_to_log", fake_stream)
+    monkeypatch.setattr(DockerBuildBackend, "_pull_container_logs_and_inspect", staticmethod(fake_pull_logs))
+    monkeypatch.setattr(DockerBuildBackend, "_remove_container", staticmethod(fake_rm))
 
     backend = DockerBuildBackend()
     result = await backend.execute(
-        build_id="test-docker-fallback",
+        build_id="test-docker-1",
         workspace_source_dir=source_dir,
-        build_command='python -c "print(\'fallback ok\')"',
+        build_command="python -m compileall .",
         timeout_seconds=15,
+        dependency_mode="source_only",
     )
 
     assert result.status == BuildStatus.COMPLETED
-    assert result.exit_code == 0
-    assert result.metadata["isolation_tier"] == "host_sandbox_venv_fallback"
-    assert (source_dir / ".venv").exists()
+    assert result.backend_type == "docker"
+    assert result.metadata["isolation_tier"] == "container_ephemeral"
+    assert not (source_dir / ".venv").exists()  # Never pollute Docker builds with host .venv
+
+    run_args = call_sequence[0][1]
+    assert "--rm" not in run_args
+    assert "--network=none" in run_args
+    assert "reproforge-ctr-test-docker-1" in run_args
+    assert [step[0] for step in call_sequence] == ["run", "logs_and_inspect", "rm"]

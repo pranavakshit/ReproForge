@@ -39,8 +39,9 @@ class FingerprintService:
         """Capture full canonical environment fingerprint without persistence."""
         return self.engine.capture_fingerprint()
 
-    async def capture_and_persist(self) -> EnvironmentFingerprintModel:
+    async def capture_and_persist(self, repo_id: Optional[str] = None) -> EnvironmentFingerprintModel:
         """Capture current host environment and persist canonical record in SQLite."""
+        _ = repo_id  # Reserved for repository-scoped telemetry tags
         fp = self.capture_fingerprint()
 
         if self._session:

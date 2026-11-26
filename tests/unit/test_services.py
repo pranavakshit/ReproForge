@@ -163,3 +163,8 @@ async def test_build_service_execution_and_cancellation(async_service_session: A
         cancelled = await svc.cancel_build("build-to-cancel")
         assert cancelled is not None
         assert cancelled.status == BuildStatus.CANCELLED.value
+
+        # Verify list_builds (unfiltered list_all) orders newest-to-oldest deterministically
+        ordered = await svc.list_builds(limit=10)
+        ids_ordered = [b.id for b in ordered]
+        assert ids_ordered.index("build-to-cancel") < ids_ordered.index(outcome.build_id)

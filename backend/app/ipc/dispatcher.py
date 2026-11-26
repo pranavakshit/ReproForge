@@ -28,6 +28,7 @@ from backend.app.models.entities import (
     SourceRevisionModel,
 )
 from backend.app.services.build_service import BuildService
+from backend.app.reporting.exporter import ReportExporter
 from backend.app.services.causality_graph_service import CausalityGraphService
 from backend.app.services.comparison_service import ComparisonService
 from backend.app.services.fingerprint_service import FingerprintService
@@ -108,6 +109,8 @@ class RequestDispatcher:
             "comparison.list": self._handle_comparison_list,
             "comparison.get_details": self._handle_comparison_get_details,
             "comparison.compare_latest": self._handle_comparison_compare_latest,
+            "comparison.compare_paths": self._handle_comparison_compare_paths,
+            "comparison.export_report": self._handle_comparison_export_report,
             "causality.get_graph": self._handle_causality_get_graph,
             "perturbation.params": self._handle_perturbation_params,
             "perturbation.run": self._handle_perturbation_run,
@@ -202,9 +205,13 @@ class RequestDispatcher:
     # --- Service Handlers ---
 
     async def _handle_fingerprint_capture(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        import json as _json
+
         repo_id = params.get("repo_id")
         fp = await self.fingerprint_service.capture_and_persist(repo_id=repo_id)
-        return _model_to_dict(fp)
+        data = _model_to_dict(fp)
+        data["json_pretty"] = _json.dumps(data, indent=2, default=str)
+        return data
 
     async def _handle_build_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
         repository_id = params.get("repository_id") or params.get("repo_id")
@@ -330,6 +337,28 @@ class RequestDispatcher:
                 r_dict["build_system"] = ", ".join(detected[:3]) if detected else "unknown"
                 r_dict["readiness_status"] = readiness.get("readiness_status", "unscanned")
                 r_dict["readiness_warnings"] = readiness.get("readiness_warnings", [])
+
+                # Expose CLI `detect` parity details statically on local repos
+                repo_path_obj = Path(r_dict.get("repo_url", ""))
+                primary_cfg = readiness.get("primary_config_file", "")
+                lock_path = readiness.get("lockfile_path", "")
+                dep_count = readiness.get("declared_dependencies_count", 0)
+                suggested_cmd = readiness.get("suggested_build_command", "")
+                if (not suggested_cmd) and repo_path_obj.exists() and repo_path_obj.is_dir():
+                    try:
+                        det_list = self.build_service.detector.detect(repo_path_obj)
+                        if det_list:
+                            first = det_list[0]
+                            primary_cfg = first.primary_config_file
+                            lock_path = first.lockfile_path or ("Yes" if first.has_lockfile else "None")
+                            dep_count = sum(s.declared_dependencies_count for s in det_list)
+                            suggested_cmd = first.suggested_build_command
+                    except Exception:
+                        pass
+                r_dict["primary_config_file"] = primary_cfg or "—"
+                r_dict["lockfile_path"] = lock_path or "None"
+                r_dict["declared_dependencies_count"] = int(dep_count or 0)
+                r_dict["suggested_build_command"] = suggested_cmd or "auto"
 
         return {
             "total_count": len(repo_dicts),
@@ -625,8 +654,78 @@ class RequestDispatcher:
             "cri": round(outcome.assessment.composite_reproducibility_index, 4),
         }
 
+    async def _handle_comparison_compare_paths(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Compare any two artifact files or directories (full CLI `compare` parity)."""
+        path_a = Path(str(params.get("path_a", "")).strip())
+        path_b = Path(str(params.get("path_b", "")).strip())
+        if not path_a.exists() or not path_b.exists():
+            raise ValueError(f"Both comparison paths must exist on disk ('{path_a}' vs '{path_b}')")
+
+        outcome = await self.comparison_service.compare_artifacts(
+            path_a,
+            path_b,
+            build_id_1=params.get("build_id_1"),
+            build_id_2=params.get("build_id_2"),
+        )
+        return {
+            "comparison_id": outcome.comparison_id,
+            "path_a": str(path_a),
+            "path_b": str(path_b),
+            "verdict": outcome.assessment.verdict.value.upper(),
+            "cri": round(outcome.assessment.composite_reproducibility_index, 4),
+            "exact_match": outcome.summary.exact_match,
+            "normalized_match": outcome.summary.normalized_match,
+        }
+
+    async def _handle_comparison_export_report(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Export comparison diagnostics & diffs to JSON, CSV, or HTML report files."""
+        comp_id = params.get("comparison_id")
+        fmt = str(params.get("format", "html")).lower()
+        if fmt not in {"json", "csv", "html"}:
+            raise ValueError(f"Unsupported report format '{fmt}'; use json, csv, or html")
+
+        details = await self._handle_comparison_get_latest(
+            {"repository_id": params.get("repository_id")} if not comp_id else {}
+        )
+        if comp_id:
+            details = await self._handle_comparison_get_details({"comparison_id": comp_id})
+
+        if not details or not details.get("id"):
+            raise ValueError("No completed comparison available to export")
+
+        reports_dir = settings.ARTIFACTS_DIR / "reports"
+        reports_dir.mkdir(parents=True, exist_ok=True)
+        cid_short = str(details.get("id", "latest"))[:12]
+        out_path = reports_dir / f"reproforge-report-{cid_short}.{fmt}"
+
+        if fmt == "json":
+            content = ReportExporter.comparison_to_json(details)
+        elif fmt == "csv":
+            content = ReportExporter.comparison_to_csv(details)
+        else:
+            content = ReportExporter.comparison_to_html(details)
+
+        out_path.write_text(content, encoding="utf-8")
+        return {
+            "format": fmt,
+            "file_path": str(out_path),
+            "comparison_id": details.get("id"),
+            "bytes": len(content.encode("utf-8")),
+        }
+
+    @staticmethod
+    def _read_failure_tail(log_file_path: str, max_lines: int = 5) -> str:
+        p = Path(log_file_path) if log_file_path else None
+        if not p or not p.is_file():
+            return ""
+        try:
+            lines = [ln.strip() for ln in p.read_text(encoding="utf-8", errors="replace").splitlines() if ln.strip()]
+            return " | ".join(lines[-max_lines:]) if lines else ""
+        except Exception:
+            return ""
+
     async def _handle_build_verify_pair(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Run two isolated builds back-to-back in separate .venvs and compare them end-to-end."""
+        """Run two isolated builds back-to-back and compare them end-to-end."""
         repo_path_str = params.get("repo_path")
         repo_id = params.get("repository_id")
         if not repo_path_str and repo_id:
@@ -640,16 +739,18 @@ class RequestDispatcher:
         repo_path = Path(repo_path_str)
         commit_ref = params.get("commit_ref", "HEAD")
         backend_type = params.get("backend_type", "local")
-        timeout_seconds = int(params.get("timeout_seconds", 180))
-        custom_cmd = params.get("custom_cmd")
-
-        self.notify("build.progress", {
-            "phase": "verify_pair",
-            "percent": 10,
-            "message": f"[1/3] Running Build A in clean .venv for {repo_path.name} ({commit_ref})...",
-        })
+        dependency_mode = str(params.get("dependency_mode", "full")).strip() or "full"
+        timeout_seconds = int(params.get("timeout_seconds", 300))
+        custom_cmd = params.get("custom_cmd") or None
 
         bid_a = f"vrf-a-{uuid.uuid4().hex[:8]}"
+        self.notify("build.progress", {
+            "build_id": bid_a,
+            "phase": "verify_pair",
+            "percent": 10,
+            "message": f"[1/3] Running Build A ({backend_type}, deps={dependency_mode}) for {repo_path.name} ({commit_ref})...",
+        })
+
         out_a = await self.build_service.execute_build(
             repo_path=repo_path,
             commit_ref=commit_ref,
@@ -657,19 +758,25 @@ class RequestDispatcher:
             custom_cmd=custom_cmd,
             timeout_seconds=timeout_seconds,
             build_id=bid_a,
+            dependency_mode=dependency_mode,
             on_output_chunk=lambda line: self.notify("build.log_chunk", {"build_id": bid_a, "chunk": f"[Build A] {line}"}),
         )
         if out_a.exit_code != 0 or not out_a.artifacts:
-            raise RuntimeError(f"Verification Build A failed (exit={out_a.exit_code}, artifacts={len(out_a.artifacts)})")
+            tail = self._read_failure_tail(out_a.log_file_path)
+            detail_msg = f" — Tail: {tail}" if tail else ""
+            raise RuntimeError(
+                f"Verification Build A failed (exit={out_a.exit_code}, artifacts={len(out_a.artifacts)}){detail_msg}"
+            )
 
         await asyncio.sleep(1.1)
+        bid_b = f"vrf-b-{uuid.uuid4().hex[:8]}"
         self.notify("build.progress", {
+            "build_id": bid_b,
             "phase": "verify_pair",
             "percent": 50,
-            "message": f"[2/3] Running Build B in clean .venv for {repo_path.name} ({commit_ref})...",
+            "message": f"[2/3] Running Build B ({backend_type}, deps={dependency_mode}) for {repo_path.name} ({commit_ref})...",
         })
 
-        bid_b = f"vrf-b-{uuid.uuid4().hex[:8]}"
         out_b = await self.build_service.execute_build(
             repo_path=repo_path,
             commit_ref=commit_ref,
@@ -677,12 +784,18 @@ class RequestDispatcher:
             custom_cmd=custom_cmd,
             timeout_seconds=timeout_seconds,
             build_id=bid_b,
+            dependency_mode=dependency_mode,
             on_output_chunk=lambda line: self.notify("build.log_chunk", {"build_id": bid_b, "chunk": f"[Build B] {line}"}),
         )
         if out_b.exit_code != 0 or not out_b.artifacts:
-            raise RuntimeError(f"Verification Build B failed (exit={out_b.exit_code}, artifacts={len(out_b.artifacts)})")
+            tail = self._read_failure_tail(out_b.log_file_path)
+            detail_msg = f" — Tail: {tail}" if tail else ""
+            raise RuntimeError(
+                f"Verification Build B failed (exit={out_b.exit_code}, artifacts={len(out_b.artifacts)}){detail_msg}"
+            )
 
         self.notify("build.progress", {
+            "build_id": bid_b,
             "phase": "comparing",
             "percent": 85,
             "message": "[3/3] Comparing Build A vs Build B & running RCA diagnostics...",
@@ -733,6 +846,7 @@ class RequestDispatcher:
             commit_ref=params.get("commit_ref", "HEAD"),
             param_names=params.get("param_names"),
             execute_real_builder=bool(params.get("execute_real_builder", False)),
+            param_overrides=params.get("param_overrides"),
         )
 
     async def _handle_perturbation_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -795,8 +909,9 @@ class RequestDispatcher:
         repo_path = Path(repo_path_str)
         commit_ref = params.get("commit_ref", "HEAD")
         backend_type = params.get("backend_type", "local")
-        timeout_seconds = int(params.get("timeout_seconds", 120))
-        custom_cmd = params.get("custom_cmd")
+        dependency_mode = str(params.get("dependency_mode", "full")).strip() or "full"
+        timeout_seconds = int(params.get("timeout_seconds", 300))
+        custom_cmd = params.get("custom_cmd") or None
         build_id = params.get("build_id") or f"build-{uuid.uuid4().hex[:10]}"
 
         self.notify("build.progress", {
@@ -807,7 +922,7 @@ class RequestDispatcher:
         })
         self.notify("build.log_chunk", {
             "build_id": build_id,
-            "chunk": f"[ReproForge] Initializing isolated {backend_type} build execution ({build_id})...\n",
+            "chunk": f"[ReproForge] Initializing {backend_type} build (deps={dependency_mode}, id={build_id})...\n",
         })
 
         streamed_chunks = False
@@ -832,6 +947,7 @@ class RequestDispatcher:
                 custom_cmd=custom_cmd,
                 timeout_seconds=timeout_seconds,
                 build_id=build_id,
+                dependency_mode=dependency_mode,
                 on_output_chunk=on_chunk,
             )
 
