@@ -22,6 +22,10 @@ pub struct RepoRecord {
     pub readiness_status: String,
     pub readiness_warnings: String,
     pub last_scanned: String,
+    pub primary_config: String,
+    pub lockfile_path: String,
+    pub declared_deps: i32,
+    pub suggested_cmd: String,
 }
 
 #[derive(Clone, Debug)]

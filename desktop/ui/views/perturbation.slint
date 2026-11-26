@@ -3,7 +3,7 @@ import { Theme } from "../theme.slint";
 import { ActionButton } from "../components/action_button.slint";
 import { PanelCard } from "../components/panel_card.slint";
 import { StatusBadge } from "../components/status_badge.slint";
-import { IconLab } from "../components/icons.slint";
+import { IconLab, IconCheck, IconRefresh } from "../components/icons.slint";
 
 export struct PerturbationParam {
     name: string,
@@ -26,8 +26,13 @@ export component PerturbationView inherits Rectangle {
     in property <[PerturbationParam]> params: [];
     in property <[SensitivityResult]> results: [];
     in property <bool> is_running: false;
+    in-out property <bool> execute_real_builder: false;
 
     callback run_campaign_requested();
+    callback param_toggled(int);
+    callback param_baseline_changed(int, string);
+    callback param_perturbed_changed(int, string);
+    callback reset_params_requested();
 
     background: Theme.bg-canvas;
 
@@ -49,18 +54,69 @@ export component PerturbationView inherits Rectangle {
                         font-weight: 700;
                     }
                     Text {
-                        text: "Isolate causal variables across clean exported git commits with confounder guard";
+                        text: "Toggle variables or edit baseline/perturbed values cleanly with confounder guard (TZ defaults to UTC -> Asia/Kolkata)";
                         color: Theme.text-secondary;
-                        font-size: 11.5px;
+                        font-size: 11px;
                     }
                 }
-                ActionButton {
-                    label: root.is_running ? "Campaign Running..." : "Run Sensitivity Campaign";
-                    variant: "primary";
-                    btn-height: 32px;
-                    disabled: root.is_running;
-                    clicked => { root.run_campaign_requested(); }
-                    IconLab { icon-size: 13px; icon-color: #FFFFFF; }
+                HorizontalLayout {
+                    spacing: 8px;
+
+                    // Full Builder Toggle Pill
+                    Rectangle {
+                        height: 32px;
+                        border-radius: Theme.radius-sm;
+                        background: root.execute_real_builder ? Theme.accent-primary-soft : Theme.bg-elevated;
+                        border-width: 1px;
+                        border-color: root.execute_real_builder ? Theme.accent-primary : Theme.border-muted;
+
+                        HorizontalLayout {
+                            padding-left: 10px;
+                            padding-right: 10px;
+                            spacing: 6px;
+                            VerticalLayout {
+                                alignment: center;
+                                Rectangle {
+                                    width: 13px;
+                                    height: 13px;
+                                    border-radius: 3px;
+                                    background: root.execute_real_builder ? Theme.accent-primary : Theme.bg-input;
+                                    border-width: 1px;
+                                    border-color: root.execute_real_builder ? Theme.accent-primary : Theme.border-muted;
+                                    if root.execute_real_builder: IconCheck { icon-size: 9px; icon-color: #FFFFFF; stroke-w: 2.3px; }
+                                }
+                            }
+                            Text {
+                                text: root.execute_real_builder ? "Mode: Full Builder" : "Mode: Fast Env Probe";
+                                color: root.execute_real_builder ? #93C5FD : Theme.text-secondary;
+                                font-size: 11px;
+                                font-weight: 600;
+                                vertical-alignment: center;
+                            }
+                        }
+                        TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.execute_real_builder = !root.execute_real_builder; }
+                        }
+                    }
+
+                    ActionButton {
+                        label: "Reset";
+                        variant: "secondary";
+                        btn-height: 32px;
+                        disabled: root.is_running;
+                        clicked => { root.reset_params_requested(); }
+                        IconRefresh { icon-size: 12px; icon-color: Theme.text-secondary; }
+                    }
+
+                    ActionButton {
+                        label: root.is_running ? "Campaign Running..." : "Run Sensitivity Campaign";
+                        variant: "primary";
+                        btn-height: 32px;
+                        disabled: root.is_running;
+                        clicked => { root.run_campaign_requested(); }
+                        IconLab { icon-size: 13px; icon-color: #FFFFFF; }
+                    }
                 }
             }
         }
@@ -71,8 +127,8 @@ export component PerturbationView inherits Rectangle {
 
             PanelCard {
                 horizontal-stretch: 2;
-                title: "Experimental Variable Matrix (" + root.params.length + ")";
-                subtitle: "Controlled single-variable deltas (SOURCE_DATE_EPOCH, TZ, LC_ALL, umask)";
+                title: "Interactive Variable Matrix (" + root.params.length + ")";
+                subtitle: "Click badge to toggle • Edit baseline / perturbed values directly";
 
                 if root.params.length == 0: Rectangle {
                     vertical-stretch: 1;
@@ -87,26 +143,94 @@ export component PerturbationView inherits Rectangle {
 
                 if root.params.length > 0: ListView {
                     vertical-stretch: 1;
-                    for p in root.params: Rectangle {
-                        height: 66px;
-                        background: Theme.bg-elevated;
-                        border-radius: Theme.radius-sm;
-                        border-width: 1px;
-                        border-color: Theme.border-subtle;
+                    for p[idx] in root.params: VerticalLayout {
+                        padding-bottom: 6px;
+                        Rectangle {
+                            min-height: 92px;
+                            background: Theme.bg-elevated;
+                            border-radius: Theme.radius-sm;
+                            border-width: 1px;
+                            border-color: p.enabled ? Theme.border-muted : Theme.border-subtle;
 
-                        VerticalLayout {
-                            padding: 10px;
-                            spacing: 4px;
-                            HorizontalLayout {
-                                alignment: space-between;
-                                Text { text: p.name; color: Theme.accent-cyan; font-size: 12px; font-weight: 700; }
-                                StatusBadge { text: p.enabled ? "ACTIVE" : "DISABLED"; kind: p.enabled ? "info" : "neutral"; }
-                            }
-                            Text {
-                                text: p.baseline_val + "  ->  " + p.perturbed_val + "  •  " + p.description;
-                                color: Theme.text-secondary;
-                                font-size: 11px;
-                                overflow: elide;
+                            VerticalLayout {
+                                padding: 10px;
+                                spacing: 6px;
+
+                                HorizontalLayout {
+                                    alignment: space-between;
+                                    Text { text: p.name; color: p.enabled ? Theme.accent-cyan : Theme.text-muted; font-size: 12px; font-weight: 700; vertical-alignment: center; }
+
+                                    Rectangle {
+                                        height: 22px;
+                                        border-radius: Theme.radius-pill;
+                                        background: p.enabled ? Theme.status-success-soft : Theme.bg-card;
+                                        border-width: 1px;
+                                        border-color: p.enabled ? Theme.status-success : Theme.border-muted;
+                                        HorizontalLayout {
+                                            padding-left: 9px;
+                                            padding-right: 9px;
+                                            Text {
+                                                text: p.enabled ? "ACTIVE" : "DISABLED";
+                                                color: p.enabled ? #6EE7B7 : Theme.text-muted;
+                                                font-size: 10px;
+                                                font-weight: 700;
+                                                vertical-alignment: center;
+                                            }
+                                        }
+                                        TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => { root.param_toggled(idx); }
+                                        }
+                                    }
+                                }
+
+                                HorizontalLayout {
+                                    spacing: 6px;
+                                    Rectangle {
+                                        horizontal-stretch: 1;
+                                        height: 26px;
+                                        background: Theme.bg-input;
+                                        border-radius: Theme.radius-xs;
+                                        border-width: 1px;
+                                        border-color: Theme.border-subtle;
+                                        base-edit := TextInput {
+                                            x: 6px;
+                                            y: 4px;
+                                            width: parent.width - 12px;
+                                            text: p.baseline_val;
+                                            color: p.enabled ? Theme.text-primary : Theme.text-muted;
+                                            font-size: 11px;
+                                            single-line: true;
+                                            edited => { root.param_baseline_changed(idx, self.text); }
+                                        }
+                                    }
+                                    Text { text: "->"; color: Theme.text-muted; font-size: 11px; vertical-alignment: center; }
+                                    Rectangle {
+                                        horizontal-stretch: 1;
+                                        height: 26px;
+                                        background: Theme.bg-input;
+                                        border-radius: Theme.radius-xs;
+                                        border-width: 1px;
+                                        border-color: Theme.border-subtle;
+                                        pert-edit := TextInput {
+                                            x: 6px;
+                                            y: 4px;
+                                            width: parent.width - 12px;
+                                            text: p.perturbed_val;
+                                            color: p.enabled ? Theme.accent-cyan : Theme.text-muted;
+                                            font-size: 11px;
+                                            single-line: true;
+                                            edited => { root.param_perturbed_changed(idx, self.text); }
+                                        }
+                                    }
+                                }
+
+                                Text {
+                                    text: p.description;
+                                    color: Theme.text-secondary;
+                                    font-size: 10.5px;
+                                    overflow: elide;
+                                }
                             }
                         }
                     }
@@ -121,7 +245,7 @@ export component PerturbationView inherits Rectangle {
                 if root.results.length == 0: Rectangle {
                     vertical-stretch: 1;
                     Text {
-                        text: "Click 'Run Sensitivity Campaign' to test how environment perturbations affect the active repository's build artifacts.";
+                        text: "Click 'Run Sensitivity Campaign' to test how single-variable changes affect the active repository's build artifacts.";
                         color: Theme.text-muted;
                         font-size: 12px;
                         wrap: word-wrap;
@@ -132,27 +256,30 @@ export component PerturbationView inherits Rectangle {
 
                 if root.results.length > 0: ListView {
                     vertical-stretch: 1;
-                    for r in root.results: Rectangle {
-                        height: 68px;
-                        background: Theme.bg-elevated;
-                        border-radius: Theme.radius-sm;
-                        border-width: 1px;
-                        border-color: Theme.border-subtle;
+                    for r in root.results: VerticalLayout {
+                        padding-bottom: 6px;
+                        Rectangle {
+                            min-height: 68px;
+                            background: Theme.bg-elevated;
+                            border-radius: Theme.radius-sm;
+                            border-width: 1px;
+                            border-color: Theme.border-subtle;
 
-                        VerticalLayout {
-                            padding: 10px;
-                            spacing: 4px;
-                            HorizontalLayout {
-                                spacing: 8px;
-                                Text { text: r.param_name; color: Theme.text-primary; font-size: 12px; font-weight: 700; horizontal-stretch: 1; }
-                                StatusBadge { text: r.hash_changed ? "DRIFT TRIGGERED" : "INVARIANT"; kind: r.hash_changed ? "warning" : "success"; }
-                                StatusBadge { text: r.epistemic_status; kind: r.epistemic_status == "EXPERIMENTALLY_VALIDATED" ? "success" : "info"; }
-                            }
-                            Text {
-                                text: "Impact: " + r.causal_impact + "  (" + r.baseline_verdict + " -> " + r.perturbed_verdict + ")";
-                                color: Theme.text-secondary;
-                                font-size: 11px;
-                                overflow: elide;
+                            VerticalLayout {
+                                padding: 10px;
+                                spacing: 4px;
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    Text { text: r.param_name; color: Theme.text-primary; font-size: 12px; font-weight: 700; horizontal-stretch: 1; }
+                                    StatusBadge { text: r.hash_changed ? "DRIFT TRIGGERED" : "INVARIANT"; kind: r.hash_changed ? "warning" : "success"; }
+                                    StatusBadge { text: r.epistemic_status; kind: r.epistemic_status == "EXPERIMENTALLY_VALIDATED" ? "success" : "info"; }
+                                }
+                                Text {
+                                    text: r.causal_impact + "  (" + r.baseline_verdict + " -> " + r.perturbed_verdict + ")";
+                                    color: Theme.text-secondary;
+                                    font-size: 11px;
+                                    wrap: word-wrap;
+                                }
                             }
                         }
                     }

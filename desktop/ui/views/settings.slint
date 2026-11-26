@@ -1,6 +1,8 @@
 import { Theme } from "../theme.slint";
+import { ActionButton } from "../components/action_button.slint";
 import { PanelCard } from "../components/panel_card.slint";
 import { StatusBadge } from "../components/status_badge.slint";
+import { IconRefresh } from "../components/icons.slint";
 
 export component SettingsView inherits Rectangle {
     in property <string> storage_db_path: "data/reproforge.db";
@@ -8,19 +10,23 @@ export component SettingsView inherits Rectangle {
     in property <string> storage_workspaces_path: "build_workspaces";
     in property <bool> docker_available: false;
     in property <string> app_version: "0.2.0";
+    in property <string> host_fingerprint_hash: "";
+    in property <string> host_fingerprint_json: "";
+
+    callback capture_fingerprint_requested();
 
     background: Theme.bg-canvas;
 
     VerticalLayout {
         padding: 20px;
-        spacing: 16px;
+        spacing: 14px;
 
         PanelCard {
             title: "Storage & Local Persistence Paths";
             subtitle: "Zero external services required; all project state resides inside workspace boundaries";
 
             GridLayout {
-                spacing: 10px;
+                spacing: 8px;
                 Row {
                     Text { text: "SQLite Ledger DB"; color: Theme.text-muted; font-size: 12px; width: 170px; }
                     Text { text: root.storage_db_path; color: Theme.text-code; font-size: 12px; font-weight: 600; }
@@ -46,48 +52,81 @@ export component SettingsView inherits Rectangle {
                     text: root.docker_available ? "Docker Isolation: READY" : "Docker Isolation: NOT DETECTED";
                     kind: root.docker_available ? "success" : "warning";
                 }
-                StatusBadge {
-                    text: "GitHub Autoscan: READ-ONLY & STATIC";
-                    kind: "info";
-                }
-                StatusBadge {
-                    text: "Host Scripts: BLOCKED";
-                    kind: "success";
-                }
+                StatusBadge { text: "GitHub Autoscan: READ-ONLY & STATIC"; kind: "info"; }
+                StatusBadge { text: "Host Scripts: BLOCKED"; kind: "success"; }
             }
 
             VerticalLayout {
-                spacing: 6px;
+                spacing: 5px;
                 Text {
                     text: "1. GitHub Autoscan checks remotes, refs, GitHub Actions workflows, and lockfiles without running repository scripts.";
                     color: Theme.text-secondary;
-                    font-size: 11.5px;
+                    font-size: 11px;
                     wrap: word-wrap;
                 }
                 Text {
-                    text: "2. Docker builds enforce --network=none, CPU/memory limits, and non-privileged execution whenever available.";
+                    text: "2. Docker containers run with --network=none, resource caps, and pre-destroy container log/inspect capture before cleanup.";
                     color: Theme.text-secondary;
-                    font-size: 11.5px;
+                    font-size: 11px;
                     wrap: word-wrap;
                 }
                 Text {
-                    text: "3. Host fallback builds export clean commits via git archive into isolated temporary workspaces with allowlisted env vars.";
+                    text: "3. Local Host Sandbox exports clean commits via git archive into isolated workspace .venvs with allowlisted env vars.";
                     color: Theme.text-secondary;
-                    font-size: 11.5px;
+                    font-size: 11px;
                     wrap: word-wrap;
                 }
             }
         }
 
+        // CLI `reproforge fingerprint` Parity Inspector
         PanelCard {
-            title: "Runtime Architecture";
-            subtitle: "Version " + root.app_version + " • Slint Native Frontend + Python Asyncio IPC Backend";
+            vertical-stretch: 1;
+            title: "Host Environment Fingerprint Inspector (CLI Parity)";
+            subtitle: root.host_fingerprint_hash != ""
+                ? ("Canonical SHA-256: " + root.host_fingerprint_hash)
+                : ("Version " + root.app_version + " • Click Capture Host Fingerprint to inspect sanitized environment JSON");
 
-            Text {
-                text: "Transport: Local JSON-RPC 2.0 over stdin/stdout (newline-delimited) • Rendering: Hardware FemtoVG or Software Fallback";
-                color: Theme.text-secondary;
-                font-size: 11.5px;
-                wrap: word-wrap;
+            HorizontalLayout {
+                alignment: space-between;
+                spacing: 10px;
+                Text {
+                    text: "Transport: Stdio JSON-RPC 2.0 • Renderer: Hardware FemtoVG or Software CPU";
+                    color: Theme.text-muted;
+                    font-size: 11px;
+                    vertical-alignment: center;
+                }
+                ActionButton {
+                    label: "Capture Host Fingerprint";
+                    variant: "primary";
+                    btn-height: 30px;
+                    clicked => { root.capture_fingerprint_requested(); }
+                    IconRefresh { icon-size: 12px; icon-color: #FFFFFF; }
+                }
+            }
+
+            Rectangle {
+                vertical-stretch: 1;
+                background: Theme.bg-deep;
+                border-radius: Theme.radius-sm;
+                border-width: 1px;
+                border-color: Theme.border-subtle;
+                clip: true;
+
+                Flickable {
+                    content-height: fp-txt.preferred-height + 20px;
+                    VerticalLayout {
+                        padding: 10px;
+                        fp-txt := Text {
+                            text: root.host_fingerprint_json != ""
+                                ? root.host_fingerprint_json
+                                : "Click 'Capture Host Fingerprint' to run reproforge fingerprint capture and inspect system/toolchain/locale/redacted-env JSON.";
+                            color: root.host_fingerprint_json != "" ? Theme.text-code : Theme.text-muted;
+                            font-size: 11px;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
             }
         }
     }

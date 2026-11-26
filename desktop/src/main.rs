@@ -1,5 +1,6 @@
 mod data;
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -32,11 +33,19 @@ struct AppState {
     candidates: Vec<WorkspaceCandidateRecord>,
     diffs: Vec<DiffEntry>,
     graph_nodes: Vec<GraphNodeItem>,
+    graph_edges_all: Vec<GraphEdgeItem>,
+    perturbation_params: Vec<PerturbationParam>,
+    default_perturbation_params: Vec<PerturbationParam>,
     selected_repo_idx: usize,
+    selected_build_id: Option<String>,
+    viewing_build_id: Option<String>,
+    active_streaming_build_id: Option<String>,
+    follow_live_build: bool,
     selected_revision_sha: String,
     selected_backend_type: String,
+    selected_dependency_mode: String,
     search_query: String,
-    log_buffer: String,
+    logs_by_build: HashMap<String, String>,
     last_log_flush: Instant,
     active_build_count: i32,
 }
@@ -49,34 +58,61 @@ impl AppState {
             candidates: Vec::new(),
             diffs: Vec::new(),
             graph_nodes: Vec::new(),
+            graph_edges_all: Vec::new(),
+            perturbation_params: Vec::new(),
+            default_perturbation_params: Vec::new(),
             selected_repo_idx: 0,
+            selected_build_id: None,
+            viewing_build_id: None,
+            active_streaming_build_id: None,
+            follow_live_build: true,
             selected_revision_sha: "HEAD".to_string(),
             selected_backend_type: "local".to_string(),
+            selected_dependency_mode: "full".to_string(),
             search_query: String::new(),
-            log_buffer: String::new(),
+            logs_by_build: HashMap::new(),
             last_log_flush: Instant::now() - Duration::from_secs(1),
             active_build_count: 0,
         }
     }
 
-    fn append_log_chunk(&mut self, chunk: &str, force: bool) -> Option<String> {
-        if !chunk.is_empty() {
-            if !self.log_buffer.is_empty() && !self.log_buffer.ends_with('\n') {
-                self.log_buffer.push('\n');
+    fn append_log_for_build(&mut self, build_id: &str, chunk: &str, force: bool) -> Option<String> {
+        let key = if build_id.trim().is_empty() {
+            "__live__".to_string()
+        } else {
+            build_id.to_string()
+        };
+        self.active_streaming_build_id = Some(key.clone());
+
+        if self.logs_by_build.len() > 32 && !self.logs_by_build.contains_key(&key) {
+            if let Some(old_k) = self
+                .logs_by_build
+                .keys()
+                .find(|k| Some((*k).as_str()) != self.viewing_build_id.as_deref())
+                .cloned()
+            {
+                self.logs_by_build.remove(&old_k);
             }
-            self.log_buffer.push_str(chunk);
-            if self.log_buffer.len() > MAX_LOG_BYTES {
-                let trim_at = self.log_buffer.len() - MAX_LOG_BYTES;
-                if let Some(pos) = self.log_buffer[trim_at..].find('\n') {
-                    self.log_buffer.drain(..trim_at + pos + 1);
+        }
+
+        let buf = self.logs_by_build.entry(key).or_default();
+        if !chunk.is_empty() {
+            if !buf.is_empty() && !buf.ends_with('\n') {
+                buf.push('\n');
+            }
+            buf.push_str(chunk);
+            if buf.len() > MAX_LOG_BYTES {
+                let trim_at = buf.len() - MAX_LOG_BYTES;
+                if let Some(pos) = buf[trim_at..].find('\n') {
+                    buf.drain(..trim_at + pos + 1);
                 } else {
-                    self.log_buffer.drain(..trim_at);
+                    buf.drain(..trim_at);
                 }
             }
         }
         if force || self.last_log_flush.elapsed() >= Duration::from_millis(120) {
             self.last_log_flush = Instant::now();
-            Some(self.log_buffer.clone())
+            Some(buf.clone())
         } else {
             None
         }
@@ -108,6 +144,10 @@ fn to_slint_repo(r: &RepoRecord) -> RepoItem {
         readiness_status: r.readiness_status.clone().into(),
         readiness_warnings: r.readiness_warnings.clone().into(),
         last_scanned: r.last_scanned.clone().into(),
+        primary_config: r.primary_config.clone().into(),
+        lockfile_path: r.lockfile_path.clone().into(),
+        declared_deps: r.declared_deps,
+        suggested_cmd: r.suggested_cmd.clone().into(),
     }
 }
 
@@ -147,7 +187,43 @@ fn push_builds_to_ui(ui: &MainWindow, state: &AppState) {
         })
         .map(to_slint_build)
         .collect();
+    let sel_idx = state
+        .selected_build_id
+        .as_deref()
+        .and_then(|sid| rows.iter().position(|r| r.build_id.as_str() == sid))
+        .unwrap_or(0) as i32;
     ui.set_builds(ModelRc::new(VecModel::from(rows)));
+    ui.set_selected_build_idx(sel_idx);
+}
+
+fn push_causality_edges_to_ui(ui: &MainWindow, state: &AppState) {
+    let sel_idx = ui.get_selected_graph_node_idx();
+    let total = state.graph_edges_all.len() as i32;
+    let filtered: Vec<GraphEdgeItem> = if sel_idx >= 0 {
+        if let Some(node) = state.graph_nodes.get(sel_idx as usize) {
+            let nid = node.id.as_str();
+            state
+                .graph_edges_all
+                .iter()
+                .filter(|e| e.source_id.as_str() == nid || e.target_id.as_str() == nid)
+                .map(|e| {
+                    let mut c = e.clone();
+                    c.direction = if e.source_id.as_str() == nid {
+                        "OUTGOING".into()
+                    } else {
+                        "INCOMING".into()
+                    };
+                    c
+                })
+                .collect()
+        } else {
+            state.graph_edges_all.clone()
+        }
+    } else {
+        state.graph_edges_all.clone()
+    };
+    ui.set_total_graph_edge_count(total);
+    ui.set_graph_edges(ModelRc::new(VecModel::from(filtered)));
 }
 
 fn refresh_target_label(ui: &MainWindow, state: &AppState) {
@@ -371,6 +447,10 @@ fn sync_repositories(ui_handle: slint::Weak<MainWindow>, client: &IpcClient, sta
                             readiness_status: r["readiness_status"].as_str().unwrap_or("unknown").to_string(),
                             readiness_warnings: warnings,
                             last_scanned: r["last_scanned_at"].as_str().unwrap_or("").chars().take(19).collect(),
+                            primary_config: r["primary_config_file"].as_str().unwrap_or("—").to_string(),
+                            lockfile_path: r["lockfile_path"].as_str().unwrap_or("None").to_string(),
+                            declared_deps: r["declared_dependencies_count"].as_i64().unwrap_or(0) as i32,
+                            suggested_cmd: r["suggested_build_command"].as_str().unwrap_or("auto").to_string(),
                         }
                     })
                     .collect()
@@ -443,6 +523,9 @@ fn sync_builds(ui_handle: slint::Weak<MainWindow>, client: &IpcClient, state: Ar
             }
 
             if let Ok(mut s) = state.lock() {
+                if s.selected_build_id.is_none() {
+                    s.selected_build_id = records.first().map(|r| r.build_id.clone());
+                }
                 s.builds = records;
                 s.active_build_count = running;
             }
@@ -588,17 +671,28 @@ fn sync_causality_graph(ui_handle: slint::Weak<MainWindow>, client: &IpcClient, 
                             .as_i64()
                             .map(|t| t as i32)
                             .unwrap_or_else(|| infer_node_tier(&node_type));
+                        let lbl = n["label"].as_str().unwrap_or("Node").replace('\n', " • ");
+                        let sub = n["subtitle"]
+                            .as_str()
+                            .or_else(|| n["details"].as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let details_sum = n["details_summary"]
+                            .as_str()
+                            .or_else(|| n["metadata"]["root_cause"].as_str())
+                            .or_else(|| n["metadata"]["action"].as_str())
+                            .or_else(|| n["metadata"]["message"].as_str())
+                            .unwrap_or(&lbl)
+                            .to_string();
                         GraphNodeItem {
                             id: n["id"].as_str().unwrap_or("").into(),
                             node_type: node_type.into(),
-                            label: n["label"].as_str().unwrap_or("Node").into(),
-                            subtitle: n["subtitle"]
-                                .as_str()
-                                .or_else(|| n["details"].as_str())
-                                .unwrap_or("")
-                                .into(),
+                            label: lbl.into(),
+                            subtitle: sub.into(),
+                            details_summary: details_sum.into(),
                             epistemic_status: n["epistemic_status"]
                                 .as_str()
+                                .or_else(|| n["status"].as_str())
                                 .unwrap_or("OBSERVED")
                                 .to_uppercase()
                                 .into(),
@@ -609,20 +703,51 @@ fn sync_causality_graph(ui_handle: slint::Weak<MainWindow>, client: &IpcClient, 
             })
             .unwrap_or_default();
 
+        let node_label_map: HashMap<String, String> = nodes
+            .iter()
+            .map(|n| (n.id.to_string(), n.label.to_string()))
+            .collect();
+
         let edges: Vec<GraphEdgeItem> = val["edges"]
             .as_array()
             .map(|arr| {
                 arr.iter()
-                    .map(|e| GraphEdgeItem {
-                        source_id: e["source_id"].as_str().unwrap_or("").into(),
-                        target_id: e["target_id"].as_str().unwrap_or("").into(),
-                        relation: e["relation"].as_str().unwrap_or("CAUSES").into(),
-                        epistemic_status: e["epistemic_status"]
+                    .map(|e| {
+                        let src_id = e["source_id"]
                             .as_str()
-                            .unwrap_or("INFERRED")
-                            .to_uppercase()
-                            .into(),
-                        evidence: e["evidence"].as_str().unwrap_or("").into(),
+                            .or_else(|| e["source"].as_str())
+                            .unwrap_or("");
+                        let tgt_id = e["target_id"]
+                            .as_str()
+                            .or_else(|| e["target"].as_str())
+                            .unwrap_or("");
+                        let src_lbl = e["source_label"]
+                            .as_str()
+                            .map(|s| s.to_string())
+                            .unwrap_or_else(|| node_label_map.get(src_id).cloned().unwrap_or_else(|| src_id.to_string()));
+                        let tgt_lbl = e["target_label"]
+                            .as_str()
+                            .map(|s| s.to_string())
+                            .unwrap_or_else(|| node_label_map.get(tgt_id).cloned().unwrap_or_else(|| tgt_id.to_string()));
+                        let ev = e["evidence"]
+                            .as_str()
+                            .or_else(|| e["details"].as_str())
+                            .unwrap_or("");
+                        GraphEdgeItem {
+                            source_id: src_id.into(),
+                            target_id: tgt_id.into(),
+                            source_label: src_lbl.into(),
+                            target_label: tgt_lbl.into(),
+                            direction: "EDGE".into(),
+                            relation: e["relation"].as_str().unwrap_or("CAUSES").into(),
+                            confidence: e["confidence"].as_str().unwrap_or("HIGH").to_uppercase().into(),
+                            epistemic_status: e["epistemic_status"]
+                                .as_str()
+                                .unwrap_or("INFERRED")
+                                .to_uppercase()
+                                .into(),
+                            evidence: ev.into(),
+                        }
                     })
                     .collect()
             })
@@ -630,18 +755,30 @@ fn sync_causality_graph(ui_handle: slint::Weak<MainWindow>, client: &IpcClient, 
 
         if let Ok(mut s) = state.lock() {
             s.graph_nodes = nodes.clone();
+            s.graph_edges_all = edges;
         }
 
+        let state_clone = state.clone();
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(ui) = ui_handle.upgrade() {
                 ui.set_graph_nodes(ModelRc::new(VecModel::from(nodes)));
-                ui.set_graph_edges(ModelRc::new(VecModel::from(edges)));
+                let cur_sel = ui.get_selected_graph_node_idx();
+                if cur_sel >= 0 {
+                    if let Ok(s) = state_clone.lock() {
+                        if (cur_sel as usize) >= s.graph_nodes.len() {
+                            ui.set_selected_graph_node_idx(-1);
+                        }
+                    }
+                }
+                if let Ok(s) = state_clone.lock() {
+                    push_causality_edges_to_ui(&ui, &s);
+                }
             }
         });
     }
 }
 
-fn sync_perturbation(ui_handle: slint::Weak<MainWindow>, client: &IpcClient, repo_id: Option<&str>) {
+fn sync_perturbation(ui_handle: slint::Weak<MainWindow>, client: &IpcClient, state: Arc<Mutex<AppState>>, repo_id: Option<&str>) {
     let params = match repo_id {
         Some(rid) => serde_json::json!({ "repository_id": rid }),
         None => serde_json::json!({}),
@@ -680,9 +817,19 @@ fn sync_perturbation(ui_handle: slint::Weak<MainWindow>, client: &IpcClient, rep
             })
             .unwrap_or_default();
 
+        let ui_params = if let Ok(mut st) = state.lock() {
+            st.default_perturbation_params = p_items.clone();
+            if st.perturbation_params.is_empty() {
+                st.perturbation_params = p_items;
+            }
+            st.perturbation_params.clone()
+        } else {
+            p_items
+        };
+
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(ui) = ui_handle.upgrade() {
-                ui.set_perturbation_params(ModelRc::new(VecModel::from(p_items)));
+                ui.set_perturbation_params(ModelRc::new(VecModel::from(ui_params)));
                 ui.set_sensitivity_results(ModelRc::new(VecModel::from(s_items)));
             }
         });
@@ -750,7 +897,7 @@ fn sync_all_views(ui_handle: slint::Weak<MainWindow>, client: &IpcClient, state:
     let repo_id = state.lock().ok().and_then(|s| s.repos.get(s.selected_repo_idx).map(|r| r.id.clone()));
     sync_diagnostics(ui_handle.clone(), client, state.clone(), repo_id.as_deref());
     sync_causality_graph(ui_handle.clone(), client, state.clone(), repo_id.as_deref());
-    sync_perturbation(ui_handle.clone(), client, repo_id.as_deref());
+    sync_perturbation(ui_handle.clone(), client, state.clone(), repo_id.as_deref());
     sync_passport(ui_handle.clone(), client, repo_id.as_deref());
     sync_remediation(ui_handle, client, repo_id.as_deref());
 }
@@ -942,12 +1089,41 @@ fn main() -> Result<(), slint::PlatformError> {
         match method {
             "build.progress" => {
                 let msg = p["message"].as_str().unwrap_or("").to_string();
-                let maybe_full = st.lock().ok().and_then(|mut s| s.append_log_chunk(&msg, true));
+                let bid = p["build_id"]
+                    .as_str()
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string());
+                let (maybe_full, should_display, label_str) = if let Ok(mut s) = st.lock() {
+                    if let Some(ref b) = bid {
+                        if !s.logs_by_build.contains_key(b) {
+                            if let Some(live_prefix) = s.logs_by_build.remove("__live__") {
+                                s.logs_by_build.insert(b.clone(), live_prefix);
+                            }
+                        }
+                    }
+                    let key = bid
+                        .clone()
+                        .or_else(|| s.active_streaming_build_id.clone())
+                        .unwrap_or_else(|| "__live__".to_string());
+                    let buf = s.append_log_for_build(&key, &msg, true);
+                    let show = s.follow_live_build || s.viewing_build_id.as_deref() == Some(key.as_str());
+                    if show && s.follow_live_build {
+                        s.viewing_build_id = Some(key.clone());
+                    }
+                    (buf, show, key)
+                } else {
+                    (None, false, String::new())
+                };
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = ui_h.upgrade() {
                         ui.set_active_build_count(1);
-                        if let Some(buf) = maybe_full {
-                            ui.set_selected_build_log(buf.into());
+                        if should_display {
+                            if !label_str.is_empty() && label_str != "__live__" {
+                                ui.set_viewing_build_label(label_str.into());
+                            }
+                            if let Some(buf) = maybe_full {
+                                ui.set_selected_build_log(buf.into());
+                            }
                         }
                     }
                 });
@@ -958,30 +1134,60 @@ fn main() -> Result<(), slint::PlatformError> {
                     .or_else(|| p["line"].as_str())
                     .unwrap_or("")
                     .to_string();
-                let maybe_full = st.lock().ok().and_then(|mut s| s.append_log_chunk(&chunk, false));
-                if let Some(buf) = maybe_full {
-                    let _ = slint::invoke_from_event_loop(move || {
-                        if let Some(ui) = ui_h.upgrade() {
-                            ui.set_selected_build_log(buf.into());
-                        }
-                    });
+                let bid = p["build_id"]
+                    .as_str()
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string());
+                let (maybe_full, should_display) = if let Ok(mut s) = st.lock() {
+                    let key = bid
+                        .or_else(|| s.active_streaming_build_id.clone())
+                        .unwrap_or_else(|| "__live__".to_string());
+                    let buf = s.append_log_for_build(&key, &chunk, false);
+                    let show = s.follow_live_build || s.viewing_build_id.as_deref() == Some(key.as_str());
+                    (buf, show)
+                } else {
+                    (None, false)
+                };
+                if should_display {
+                    if let Some(buf) = maybe_full {
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_h.upgrade() {
+                                ui.set_selected_build_log(buf.into());
+                            }
+                        });
+                    }
                 }
             }
             "build.completed" => {
                 let status_str = p["status"].as_str().unwrap_or("completed").to_string();
                 let sha = p["primary_hash"].as_str().unwrap_or("—").to_string();
-                let maybe_full = st
-                    .lock()
-                    .ok()
-                    .and_then(|mut s| s.append_log_chunk(&format!("[Engine] Build finished: {}", status_str), true));
+                let bid = p["build_id"]
+                    .as_str()
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string());
+                let (maybe_full, should_display, label_str) = if let Ok(mut s) = st.lock() {
+                    let key = bid
+                        .or_else(|| s.active_streaming_build_id.clone())
+                        .unwrap_or_else(|| "__live__".to_string());
+                    let buf = s.append_log_for_build(&key, &format!("[Engine] Build finished: {}", status_str), true);
+                    let show = s.follow_live_build || s.viewing_build_id.as_deref() == Some(key.as_str());
+                    (buf, show, key)
+                } else {
+                    (None, false, String::new())
+                };
 
                 let ui_h2 = ui_h.clone();
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = ui_h2.upgrade() {
                         ui.set_active_build_count(0);
-                        ui.set_selected_hash(sha.into());
-                        if let Some(buf) = maybe_full {
-                            ui.set_selected_build_log(buf.into());
+                        if should_display {
+                            ui.set_selected_hash(sha.into());
+                            if !label_str.is_empty() && label_str != "__live__" {
+                                ui.set_viewing_build_label(label_str.into());
+                            }
+                            if let Some(buf) = maybe_full {
+                                ui.set_selected_build_log(buf.into());
+                            }
                         }
                     }
                 });
@@ -1080,20 +1286,31 @@ fn main() -> Result<(), slint::PlatformError> {
                 .nth(idx as usize)
                 .cloned();
             if let Some(ref b) = chosen {
-                if let Some(r_idx) = st.repos.iter().position(|r| r.name == b.repo) {
+                st.selected_build_id = Some(b.build_id.clone());
+                st.viewing_build_id = Some(b.build_id.clone());
+                st.follow_live_build = false;
+                let cached_log = st.logs_by_build.get(&b.build_id).cloned().unwrap_or_else(|| {
+                    format!("Loading build details & logs for '{}'...", b.build_id)
+                });
+                let matched_id_opt = if let Some(r_idx) = st.repos.iter().position(|r| r.name == b.repo) {
                     st.selected_repo_idx = r_idx;
                     if !b.commit.is_empty() {
                         st.selected_revision_sha = b.commit.clone();
                     }
-                    let matched_id = st.repos[r_idx].id.clone();
-                    if let Some(ui) = ui_row.upgrade() {
-                        ui.set_selected_repo_idx(r_idx as i32);
-                        refresh_target_label(&ui, &st);
-                    }
-                    Some((b.build_id.clone(), Some(matched_id)))
+                    Some(st.repos[r_idx].id.clone())
                 } else {
-                    Some((b.build_id.clone(), None))
+                    None
+                };
+                if let Some(ui) = ui_row.upgrade() {
+                    ui.set_following_live_build(false);
+                    ui.set_viewing_build_label(b.build_id.clone().into());
+                    ui.set_selected_build_log(cached_log.into());
+                    if let Some(r_idx) = st.repos.iter().position(|r| r.name == b.repo) {
+                        ui.set_selected_repo_idx(r_idx as i32);
+                    }
+                    refresh_target_label(&ui, &st);
                 }
+                Some((b.build_id.clone(), matched_id_opt))
             } else {
                 None
             }
@@ -1116,24 +1333,47 @@ fn main() -> Result<(), slint::PlatformError> {
                         let count = det["artifacts"].as_array().map(|a| a.len()).unwrap_or(0);
                         let raw_log = det["log_text"].as_str().unwrap_or("");
                         let log_txt = if raw_log.is_empty() {
-                            format!("No persisted build log recorded on disk for build '{}'.", bid)
+                            if let Ok(s) = st_sync.lock() {
+                                if let Some(streamed) = s.logs_by_build.get(&bid) {
+                                    if !streamed.trim().is_empty() {
+                                        streamed.clone()
+                                    } else {
+                                        format!("No persisted build log recorded on disk for build '{}'.", bid)
+                                    }
+                                } else {
+                                    format!("No persisted build log recorded on disk for build '{}'.", bid)
+                                }
+                            } else {
+                                format!("No persisted build log recorded on disk for build '{}'.", bid)
+                            }
                         } else {
+                            if let Ok(mut s) = st_sync.lock() {
+                                s.logs_by_build.insert(bid.clone(), raw_log.to_string());
+                            }
                             raw_log.to_string()
                         };
                         let ui_det = ui_h.clone();
+                        let st_chk = st_sync.clone();
+                        let bid_chk = bid.clone();
                         let _ = slint::invoke_from_event_loop(move || {
-                            if let Some(ui) = ui_det.upgrade() {
-                                ui.set_selected_hash(sha.into());
-                                ui.set_selected_artifact_count(format!("{} artifact(s)", count).into());
-                                ui.set_selected_build_log(log_txt.into());
+                            let still_viewing = st_chk
+                                .lock()
+                                .map(|s| s.viewing_build_id.as_deref() == Some(bid_chk.as_str()))
+                                .unwrap_or(true);
+                            if still_viewing {
+                                if let Some(ui) = ui_det.upgrade() {
+                                    ui.set_selected_hash(sha.into());
+                                    ui.set_selected_artifact_count(format!("{} artifact(s)", count).into());
+                                    ui.set_selected_build_log(log_txt.into());
+                                }
                             }
                         });
                     }
                     if let Some(rid) = matched_repo_id {
                         sync_revisions_for_repo(ui_h.clone(), &client, &st_sync, &rid);
                         sync_diagnostics(ui_h.clone(), &client, st_sync.clone(), Some(&rid));
-                        sync_causality_graph(ui_h.clone(), &client, st_sync, Some(&rid));
-                        sync_perturbation(ui_h.clone(), &client, Some(&rid));
+                        sync_causality_graph(ui_h.clone(), &client, st_sync.clone(), Some(&rid));
+                        sync_perturbation(ui_h.clone(), &client, st_sync, Some(&rid));
                         sync_passport(ui_h.clone(), &client, Some(&rid));
                         sync_remediation(ui_h, &client, Some(&rid));
                     }
@@ -1170,8 +1410,8 @@ fn main() -> Result<(), slint::PlatformError> {
                 if let Some(client) = sup.get_client() {
                     sync_revisions_for_repo(ui_h.clone(), &client, &st, &rid);
                     sync_diagnostics(ui_h.clone(), &client, st.clone(), Some(&rid));
-                    sync_causality_graph(ui_h.clone(), &client, st, Some(&rid));
-                    sync_perturbation(ui_h.clone(), &client, Some(&rid));
+                    sync_causality_graph(ui_h.clone(), &client, st.clone(), Some(&rid));
+                    sync_perturbation(ui_h.clone(), &client, st, Some(&rid));
                     sync_passport(ui_h.clone(), &client, Some(&rid));
                     sync_remediation(ui_h, &client, Some(&rid));
                 }
@@ -1201,26 +1441,87 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     });
 
+    let st_dep = state.clone();
+    let ui_dep = main_window.as_weak();
+    main_window.on_dependency_mode_selected(move |mode| {
+        let mode_str = mode.to_string();
+        let norm = if mode_str == "source_only" || mode_str.to_lowercase().contains("source") {
+            "source_only".to_string()
+        } else {
+            "full".to_string()
+        };
+        if let Ok(mut s) = st_dep.lock() {
+            s.selected_dependency_mode = norm.clone();
+        }
+        if let Some(ui) = ui_dep.upgrade() {
+            ui.set_selected_dependency_mode(norm.clone().into());
+            let desc = if norm == "source_only" {
+                "Source-Only (Fast, Skip Dependencies)"
+            } else {
+                "Full (Cached Wheelhouse)"
+            };
+            ui.set_status_banner(format!("Docker/Build dependency mode set to: {}", desc).into());
+        }
+    });
+
+    let st_live = state.clone();
+    let ui_live = main_window.as_weak();
+    main_window.on_follow_live_requested(move || {
+        let (lbl, log_txt) = if let Ok(mut s) = st_live.lock() {
+            s.follow_live_build = true;
+            let live_id = s.active_streaming_build_id.clone();
+            s.viewing_build_id = live_id.clone();
+            let key = live_id.as_deref().unwrap_or("__live__");
+            let buf = s
+                .logs_by_build
+                .get(key)
+                .cloned()
+                .unwrap_or_else(|| "Following live build output stream...".to_string());
+            let label = match live_id {
+                Some(ref id) if id != "__live__" => id.clone(),
+                _ => "Live Stream".to_string(),
+            };
+            (label, buf)
+        } else {
+            ("Live Stream".to_string(), String::new())
+        };
+        if let Some(ui) = ui_live.upgrade() {
+            ui.set_following_live_build(true);
+            ui.set_viewing_build_label(lbl.into());
+            ui.set_selected_build_log(log_txt.into());
+        }
+    });
+
     // Wire Callbacks: Trigger Verification Build (Uses Selected Repo + Backend)
     let ui_trig = main_window.as_weak();
     let sup_trig = supervisor.clone();
     let st_trig = state.clone();
     main_window.on_trigger_build_requested(move || {
-        let (repo_id, commit_ref, backend) = {
-            let s = st_trig.lock().unwrap();
+        let (repo_id, commit_ref, backend, dep_mode) = {
+            let mut s = st_trig.lock().unwrap();
+            s.follow_live_build = true;
+            s.viewing_build_id = None;
+            s.active_streaming_build_id = None;
+            s.logs_by_build.remove("__live__");
             let rid = s.repos.get(s.selected_repo_idx).map(|r| r.id.clone());
             let cref = if s.selected_revision_sha.is_empty() { "HEAD".into() } else { s.selected_revision_sha.clone() };
-            (rid, cref, s.selected_backend_type.clone())
+            (rid, cref, s.selected_backend_type.clone(), s.selected_dependency_mode.clone())
         };
 
-        if let Some(ui) = ui_trig.upgrade() {
+        let (custom_cmd, timeout_secs) = if let Some(ui) = ui_trig.upgrade() {
+            let cmd = ui.get_custom_build_cmd().trim().to_string();
+            let timeout = ui.get_build_timeout_str().trim().parse::<u64>().unwrap_or(300).clamp(30, 3600);
             ui.set_active_tab(2);
             ui.set_active_build_count(1);
-            ui.set_selected_build_log(format!("Launching {} build at {}...", backend, commit_ref).into());
-        }
-        if let Ok(mut s) = st_trig.lock() {
-            s.log_buffer.clear();
-        }
+            ui.set_following_live_build(true);
+            ui.set_viewing_build_label(format!("Live ({})", backend).into());
+            ui.set_selected_build_log(
+                format!("Launching {} build (deps={}, timeout={}s) at {}...", backend, dep_mode, timeout, commit_ref).into(),
+            );
+            (cmd, timeout)
+        } else {
+            (String::new(), 300)
+        };
 
         let sup = sup_trig.clone();
         let ui_h = ui_trig.clone();
@@ -1229,11 +1530,16 @@ fn main() -> Result<(), slint::PlatformError> {
                 let mut params = serde_json::json!({
                     "backend_type": backend,
                     "commit_ref": commit_ref,
+                    "dependency_mode": dep_mode,
+                    "timeout_seconds": timeout_secs,
                 });
+                if !custom_cmd.is_empty() {
+                    params["custom_cmd"] = serde_json::Value::String(custom_cmd);
+                }
                 if let Some(rid) = repo_id {
                     params["repository_id"] = serde_json::Value::String(rid);
                 }
-                if let Err(e) = client.send_request("build.trigger", Some(params), Duration::from_secs(120)) {
+                if let Err(e) = client.send_request("build.trigger", Some(params), Duration::from_secs(timeout_secs + 120)) {
                     let msg = format!("Build error: {}", e);
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = ui_h.upgrade() {
@@ -1250,17 +1556,30 @@ fn main() -> Result<(), slint::PlatformError> {
     let sup_rev_b = supervisor.clone();
     let st_rev_b = state.clone();
     main_window.on_build_specific_revision_requested(move |sha| {
-        let (repo_id, backend) = {
+        let (repo_id, backend, dep_mode) = {
             let mut s = st_rev_b.lock().unwrap();
             s.selected_revision_sha = sha.to_string();
-            s.log_buffer.clear();
+            s.follow_live_build = true;
+            s.viewing_build_id = None;
+            s.active_streaming_build_id = None;
+            s.logs_by_build.remove("__live__");
             let rid = s.repos.get(s.selected_repo_idx).map(|r| r.id.clone());
-            (rid, s.selected_backend_type.clone())
+            (rid, s.selected_backend_type.clone(), s.selected_dependency_mode.clone())
         };
-        if let Some(ui) = ui_rev_b.upgrade() {
+        let (custom_cmd, timeout_secs) = if let Some(ui) = ui_rev_b.upgrade() {
+            let cmd = ui.get_custom_build_cmd().trim().to_string();
+            let timeout = ui.get_build_timeout_str().trim().parse::<u64>().unwrap_or(300).clamp(30, 3600);
+            ui.set_active_tab(2);
             ui.set_active_build_count(1);
-            ui.set_selected_build_log(format!("Launching {} build for revision {}...", backend, sha).into());
-        }
+            ui.set_following_live_build(true);
+            ui.set_viewing_build_label(format!("Live ({})", backend).into());
+            ui.set_selected_build_log(
+                format!("Launching {} build (deps={}, timeout={}s) for revision {}...", backend, dep_mode, timeout, sha).into(),
+            );
+            (cmd, timeout)
+        } else {
+            (String::new(), 300)
+        };
         let sup = sup_rev_b.clone();
         let ui_h = ui_rev_b.clone();
         let cref = sha.to_string();
@@ -1269,11 +1588,16 @@ fn main() -> Result<(), slint::PlatformError> {
                 let mut params = serde_json::json!({
                     "backend_type": backend,
                     "commit_ref": cref,
+                    "dependency_mode": dep_mode,
+                    "timeout_seconds": timeout_secs,
                 });
+                if !custom_cmd.is_empty() {
+                    params["custom_cmd"] = serde_json::Value::String(custom_cmd);
+                }
                 if let Some(rid) = repo_id {
                     params["repository_id"] = serde_json::Value::String(rid);
                 }
-                let _ = client.send_request("build.trigger", Some(params), Duration::from_secs(120));
+                let _ = client.send_request("build.trigger", Some(params), Duration::from_secs(timeout_secs + 120));
                 let _ = ui_h;
             }
         });
@@ -1500,26 +1824,49 @@ fn main() -> Result<(), slint::PlatformError> {
     let sup_vpair = supervisor.clone();
     let st_vpair = state.clone();
     main_window.on_verify_pair_requested(move || {
-        let (repo_id, repo_name, commit_ref, backend) = {
-            let s = st_vpair.lock().unwrap();
+        let (repo_id, repo_name, commit_ref, backend, dep_mode) = {
+            let mut s = st_vpair.lock().unwrap();
+            s.follow_live_build = true;
+            s.viewing_build_id = None;
+            s.active_streaming_build_id = None;
+            s.logs_by_build.remove("__live__");
             let r = s.repos.get(s.selected_repo_idx);
             let rid = r.map(|x| x.id.clone());
             let rname = r.map(|x| x.name.clone()).unwrap_or_else(|| "repository".to_string());
             let cref = if s.selected_revision_sha.is_empty() { "HEAD".into() } else { s.selected_revision_sha.clone() };
-            (rid, rname, cref, s.selected_backend_type.clone())
+            (rid, rname, cref, s.selected_backend_type.clone(), s.selected_dependency_mode.clone())
         };
 
-        if let Some(ui) = ui_vpair.upgrade() {
+        let (custom_cmd, timeout_secs) = if let Some(ui) = ui_vpair.upgrade() {
+            let cmd = ui.get_custom_build_cmd().trim().to_string();
+            let timeout = ui.get_build_timeout_str().trim().parse::<u64>().unwrap_or(300).clamp(30, 3600);
             ui.set_active_tab(2);
             ui.set_active_build_count(1);
+            ui.set_following_live_build(true);
+            ui.set_viewing_build_label(format!("Live Verify-Pair ({})", backend).into());
+            let env_desc = if backend == "docker" {
+                "separate isolated Docker containers"
+            } else {
+                "separate isolated .venvs"
+            };
             ui.set_selected_build_log(
-                format!("[1/3] Running Build A & Build B for '{}' ({}) in separate isolated .venvs...\n", repo_name, commit_ref).into(),
+                format!(
+                    "[1/3] Running Build A & Build B for '{}' ({}) in {} (deps={}, timeout={}s)...\n",
+                    repo_name, commit_ref, env_desc, dep_mode, timeout
+                )
+                .into(),
             );
-            ui.set_status_banner(format!("Verifying reproducibility for '{}' (2 isolated builds + compare)...", repo_name).into());
-        }
-        if let Ok(mut s) = st_vpair.lock() {
-            s.log_buffer.clear();
-        }
+            ui.set_status_banner(
+                format!(
+                    "Verifying reproducibility for '{}' ({}, 2 isolated builds + compare)...",
+                    repo_name, backend
+                )
+                .into(),
+            );
+            (cmd, timeout)
+        } else {
+            (String::new(), 300)
+        };
 
         let sup = sup_vpair.clone();
         let ui_h = ui_vpair.clone();
@@ -1529,11 +1876,17 @@ fn main() -> Result<(), slint::PlatformError> {
                 let mut params = serde_json::json!({
                     "backend_type": backend,
                     "commit_ref": commit_ref,
+                    "dependency_mode": dep_mode,
+                    "timeout_seconds": timeout_secs,
                 });
+                if !custom_cmd.is_empty() {
+                    params["custom_cmd"] = serde_json::Value::String(custom_cmd);
+                }
                 if let Some(rid) = repo_id {
                     params["repository_id"] = serde_json::Value::String(rid);
                 }
-                match client.send_request("build.verify_pair", Some(params), Duration::from_secs(240)) {
+                let rpc_wait = Duration::from_secs(timeout_secs.saturating_mul(2) + 180);
+                match client.send_request("build.verify_pair", Some(params), rpc_wait) {
                     Ok(res) => {
                         let verdict = res["verdict"].as_str().unwrap_or("UNCOMPARED").to_string();
                         let cri = res["cri"].as_f64().unwrap_or(0.0);
@@ -1659,27 +2012,79 @@ fn main() -> Result<(), slint::PlatformError> {
     let sup_pert = supervisor.clone();
     let st_pert = state.clone();
     main_window.on_run_perturbation_campaign_requested(move || {
-        let repo_id = st_pert
-            .lock()
-            .ok()
-            .and_then(|s| s.repos.get(s.selected_repo_idx).map(|r| r.id.clone()));
-        if let Some(ui) = ui_pert.upgrade() {
+        let (repo_id, commit_ref, param_overrides, active_names) = {
+            let guard = st_pert.lock().ok();
+            if let Some(s) = guard {
+                let rid = s.repos.get(s.selected_repo_idx).map(|r| r.id.clone());
+                let cref = if s.selected_revision_sha.is_empty() {
+                    "HEAD".to_string()
+                } else {
+                    s.selected_revision_sha.clone()
+                };
+                let overrides: Vec<serde_json::Value> = s
+                    .perturbation_params
+                    .iter()
+                    .map(|p| {
+                        serde_json::json!({
+                            "name": p.name.as_str(),
+                            "baseline_val": p.baseline_val.as_str(),
+                            "perturbed_val": p.perturbed_val.as_str(),
+                            "enabled": p.enabled,
+                        })
+                    })
+                    .collect();
+                let enabled_names: Vec<String> = s
+                    .perturbation_params
+                    .iter()
+                    .filter(|p| p.enabled)
+                    .map(|p| p.name.to_string())
+                    .collect();
+                (rid, cref, overrides, enabled_names)
+            } else {
+                (None, "HEAD".to_string(), Vec::new(), Vec::new())
+            }
+        };
+        let execute_real = if let Some(ui) = ui_pert.upgrade() {
+            let real_flag = ui.get_perturbation_execute_real_builder();
             ui.set_perturbation_running(true);
-            ui.set_status_banner("Running single-variable perturbation campaign...".into());
-        }
+            ui.set_status_banner(
+                if real_flag {
+                    "Running Full Builder perturbation campaign (re-executing real project builds)...".into()
+                } else {
+                    "Running Fast Env Probe single-variable perturbation campaign...".into()
+                },
+            );
+            real_flag
+        } else {
+            false
+        };
         let ui_h = ui_pert.clone();
         let sup = sup_pert.clone();
         let st = st_pert.clone();
         std::thread::spawn(move || {
             if let Some(client) = sup.get_client() {
-                let params = match &repo_id {
-                    Some(rid) => serde_json::json!({ "repository_id": rid }),
-                    None => serde_json::json!({}),
+                let mut params = serde_json::json!({
+                    "commit_ref": commit_ref,
+                    "execute_real_builder": execute_real,
+                });
+                if let Some(rid) = &repo_id {
+                    params["repository_id"] = serde_json::Value::String(rid.clone());
+                }
+                if !param_overrides.is_empty() {
+                    params["param_overrides"] = serde_json::Value::Array(param_overrides);
+                }
+                if !active_names.is_empty() {
+                    params["param_names"] = serde_json::json!(active_names);
+                }
+                let rpc_wait = if execute_real {
+                    Duration::from_secs(360)
+                } else {
+                    Duration::from_secs(90)
                 };
-                match client.send_request("perturbation.run", Some(params), Duration::from_secs(90)) {
+                match client.send_request("perturbation.run", Some(params), rpc_wait) {
                     Ok(res) => {
                         let cid = res["campaign_id"].as_str().unwrap_or("campaign").to_string();
-                        sync_perturbation(ui_h.clone(), &client, repo_id.as_deref());
+                        sync_perturbation(ui_h.clone(), &client, st.clone(), repo_id.as_deref());
                         sync_diagnostics(ui_h.clone(), &client, st.clone(), repo_id.as_deref());
                         sync_causality_graph(ui_h.clone(), &client, st, repo_id.as_deref());
                         let _ = slint::invoke_from_event_loop(move || {
@@ -1828,6 +2233,334 @@ fn main() -> Result<(), slint::PlatformError> {
                             ui.set_status_banner(format!("Verification rebuild result: {}", status).into());
                         }
                     });
+                }
+            }
+        });
+    });
+
+    // Wire Callbacks: Causality Graph Node Filtering
+    let ui_gnode = main_window.as_weak();
+    let st_gnode = state.clone();
+    main_window.on_graph_node_selected(move |idx| {
+        if let Some(ui) = ui_gnode.upgrade() {
+            ui.set_selected_graph_node_idx(idx);
+            if let Ok(s) = st_gnode.lock() {
+                push_causality_edges_to_ui(&ui, &s);
+            }
+        }
+    });
+
+    let ui_gclr = main_window.as_weak();
+    let st_gclr = state.clone();
+    main_window.on_clear_graph_node_filter(move || {
+        if let Some(ui) = ui_gclr.upgrade() {
+            ui.set_selected_graph_node_idx(-1);
+            if let Ok(s) = st_gclr.lock() {
+                push_causality_edges_to_ui(&ui, &s);
+            }
+        }
+    });
+
+    // Wire Callbacks: Interactive Perturbation Matrix Editing & Reset
+    let ui_ptog = main_window.as_weak();
+    let st_ptog = state.clone();
+    main_window.on_perturbation_param_toggled(move |idx| {
+        let updated = if let Ok(mut s) = st_ptog.lock() {
+            if let Some(item) = s.perturbation_params.get_mut(idx as usize) {
+                item.enabled = !item.enabled;
+            }
+            Some(s.perturbation_params.clone())
+        } else {
+            None
+        };
+        if let Some(items) = updated {
+            if let Some(ui) = ui_ptog.upgrade() {
+                ui.set_perturbation_params(ModelRc::new(VecModel::from(items)));
+            }
+        }
+    });
+
+    let st_pbase = state.clone();
+    main_window.on_perturbation_param_baseline_changed(move |idx, val| {
+        if let Ok(mut s) = st_pbase.lock() {
+            if let Some(item) = s.perturbation_params.get_mut(idx as usize) {
+                item.baseline_val = val;
+            }
+        }
+    });
+
+    let st_ppert = state.clone();
+    main_window.on_perturbation_param_perturbed_changed(move |idx, val| {
+        if let Ok(mut s) = st_ppert.lock() {
+            if let Some(item) = s.perturbation_params.get_mut(idx as usize) {
+                item.perturbed_val = val;
+            }
+        }
+    });
+
+    let ui_prst = main_window.as_weak();
+    let st_prst = state.clone();
+    main_window.on_reset_perturbation_params_requested(move || {
+        let reset_items = if let Ok(mut s) = st_prst.lock() {
+            if !s.default_perturbation_params.is_empty() {
+                s.perturbation_params = s.default_perturbation_params.clone();
+            }
+            s.perturbation_params.clone()
+        } else {
+            Vec::new()
+        };
+        if let Some(ui) = ui_prst.upgrade() {
+            ui.set_perturbation_params(ModelRc::new(VecModel::from(reset_items)));
+            ui.set_perturbation_execute_real_builder(false);
+            ui.set_status_banner("Perturbation parameters reset to backend defaults.".into());
+        }
+    });
+
+    // Wire Callbacks: Custom Artifact Path Pickers, Compare & Report Export (CLI Parity)
+    let ui_pa = main_window.as_weak();
+    main_window.on_pick_custom_path_a_requested(move || {
+        let ui_h = ui_pa.clone();
+        std::thread::spawn(move || {
+            if let Some(path) = rfd::FileDialog::new().set_title("Select Artifact A File").pick_file() {
+                let p_str = path.to_string_lossy().to_string();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = ui_h.upgrade() {
+                        ui.set_custom_compare_path_a(p_str.into());
+                    }
+                });
+            }
+        });
+    });
+
+    let ui_pb = main_window.as_weak();
+    main_window.on_pick_custom_path_b_requested(move || {
+        let ui_h = ui_pb.clone();
+        std::thread::spawn(move || {
+            if let Some(path) = rfd::FileDialog::new().set_title("Select Artifact B File").pick_file() {
+                let p_str = path.to_string_lossy().to_string();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = ui_h.upgrade() {
+                        ui.set_custom_compare_path_b(p_str.into());
+                    }
+                });
+            }
+        });
+    });
+
+    let ui_cp = main_window.as_weak();
+    let sup_cp = supervisor.clone();
+    let st_cp = state.clone();
+    main_window.on_compare_custom_paths_requested(move || {
+        let Some(ui) = ui_cp.upgrade() else { return; };
+        let path_a = ui.get_custom_compare_path_a().trim().to_string();
+        let path_b = ui.get_custom_compare_path_b().trim().to_string();
+        if path_a.is_empty() || path_b.is_empty() {
+            ui.set_status_banner("Provide both Artifact A and Artifact B paths to compare.".into());
+            return;
+        }
+        ui.set_status_banner(format!("Comparing '{}' vs '{}'...", path_a, path_b).into());
+        let ui_h = ui_cp.clone();
+        let sup = sup_cp.clone();
+        let st = st_cp.clone();
+        std::thread::spawn(move || {
+            if let Some(client) = sup.get_client() {
+                let params = serde_json::json!({ "path_a": path_a, "path_b": path_b });
+                match client.send_request("comparison.compare_paths", Some(params), Duration::from_secs(30)) {
+                    Ok(res) => {
+                        let cid = res["comparison_id"].as_str().unwrap_or("").to_string();
+                        let verdict = res["verdict"].as_str().unwrap_or("UNCOMPARED").to_string();
+                        let cri = res["cri"].as_f64().unwrap_or(0.0);
+                        let p_a = res["path_a"].as_str().unwrap_or(&path_a).to_string();
+                        let p_b = res["path_b"].as_str().unwrap_or(&path_b).to_string();
+
+                        if !cid.is_empty() {
+                            if let Ok(det) = client.send_request(
+                                "comparison.get_details",
+                                Some(serde_json::json!({ "comparison_id": cid })),
+                                Duration::from_secs(10),
+                            ) {
+                                let cri_c = det["content_agreement_ratio"].as_f64().unwrap_or(cri).clamp(0.0, 1.0) as f32;
+                                let cri_m = det["metadata_agreement_ratio"].as_f64().unwrap_or(cri).clamp(0.0, 1.0) as f32;
+                                let cri_e = det["environment_consistency_score"].as_f64().unwrap_or(1.0).clamp(0.0, 1.0) as f32;
+                                let diffs: Vec<DiffEntry> = det["diff_entries"]
+                                    .as_array()
+                                    .map(|arr| {
+                                        arr.iter()
+                                            .map(|d| DiffEntry {
+                                                path: d["relative_path"]
+                                                    .as_str()
+                                                    .or_else(|| d["path"].as_str())
+                                                    .unwrap_or("unknown")
+                                                    .into(),
+                                                diff_type: d["diff_type"]
+                                                    .as_str()
+                                                    .or_else(|| d["change_type"].as_str())
+                                                    .unwrap_or("CONTENT")
+                                                    .into(),
+                                                status: d["diff_type"]
+                                                    .as_str()
+                                                    .or_else(|| d["change_type"].as_str())
+                                                    .unwrap_or("DRIFT")
+                                                    .into(),
+                                                size_delta: d["detail"].as_str().unwrap_or("").into(),
+                                                snippet: d["diff_snippet"]
+                                                    .as_str()
+                                                    .or_else(|| d["detail"].as_str())
+                                                    .unwrap_or("")
+                                                    .into(),
+                                            })
+                                            .collect()
+                                    })
+                                    .unwrap_or_default();
+                                let findings: Vec<DiagnosticFindingItem> = det["diagnostic_findings"]
+                                    .as_array()
+                                    .map(|arr| {
+                                        arr.iter()
+                                            .map(|f| DiagnosticFindingItem {
+                                                rule_id: f["rule_id"].as_str().unwrap_or("RCA").into(),
+                                                severity: f["severity"].as_str().or_else(|| f["confidence"].as_str()).unwrap_or("MEDIUM").to_uppercase().into(),
+                                                category: f["category"].as_str().unwrap_or("ENVIRONMENT").into(),
+                                                title: f["title"].as_str().or_else(|| f["category"].as_str()).unwrap_or("Diagnostic Finding").into(),
+                                                epistemic_status: f["epistemic_status"].as_str().unwrap_or("INFERRED").into(),
+                                                summary: f["summary"].as_str().or_else(|| f["message"].as_str()).unwrap_or("").into(),
+                                                remediation: f["suggested_remediation"].as_str().unwrap_or("").into(),
+                                            })
+                                            .collect()
+                                    })
+                                    .unwrap_or_default();
+                                let first_snip = diffs.first().map(|d| d.snippet.to_string()).unwrap_or_default();
+                                if let Ok(mut s) = st.lock() {
+                                    s.diffs = diffs.clone();
+                                }
+                                let v_disp = verdict.clone();
+                                let _ = slint::invoke_from_event_loop(move || {
+                                    if let Some(ui) = ui_h.upgrade() {
+                                        ui.set_diag_target_a(p_a.into());
+                                        ui.set_diag_target_b(p_b.into());
+                                        ui.set_diag_verdict(v_disp.clone().into());
+                                        ui.set_cri_content(cri_c);
+                                        ui.set_cri_metadata(cri_m);
+                                        ui.set_cri_environment(cri_e);
+                                        ui.set_diff_entries(ModelRc::new(VecModel::from(diffs)));
+                                        ui.set_selected_diff_snippet(first_snip.into());
+                                        ui.set_diff_selected_idx(0);
+                                        ui.set_diagnostic_findings(ModelRc::new(VecModel::from(findings)));
+                                        ui.set_status_banner(format!("Custom compare result: {} (CRI {:.2})", v_disp, cri).into());
+                                    }
+                                });
+                                return;
+                            }
+                        }
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_h.upgrade() {
+                                ui.set_diag_target_a(p_a.into());
+                                ui.set_diag_target_b(p_b.into());
+                                ui.set_diag_verdict(verdict.clone().into());
+                                ui.set_status_banner(format!("Custom compare result: {} (CRI {:.2})", verdict, cri).into());
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_h.upgrade() {
+                                ui.set_status_banner(format!("Custom path comparison failed: {}", e).into());
+                            }
+                        });
+                    }
+                }
+            }
+        });
+    });
+
+    let ui_exp = main_window.as_weak();
+    let sup_exp = supervisor.clone();
+    let st_exp = state.clone();
+    main_window.on_export_report_requested(move |fmt| {
+        let fmt_str = fmt.to_string();
+        let repo_id = st_exp
+            .lock()
+            .ok()
+            .and_then(|s| s.repos.get(s.selected_repo_idx).map(|r| r.id.clone()));
+        let ui_h = ui_exp.clone();
+        let sup = sup_exp.clone();
+        std::thread::spawn(move || {
+            if let Some(client) = sup.get_client() {
+                let mut params = serde_json::json!({ "format": fmt_str });
+                if let Some(rid) = repo_id {
+                    params["repository_id"] = serde_json::Value::String(rid);
+                }
+                match client.send_request("comparison.export_report", Some(params), Duration::from_secs(15)) {
+                    Ok(res) => {
+                        let path = res["file_path"].as_str().unwrap_or("report").to_string();
+                        let bytes = res["bytes"].as_u64().unwrap_or(0);
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_h.upgrade() {
+                                ui.set_status_banner(
+                                    format!("Exported {} report ({} bytes) to {}", fmt_str.to_uppercase(), bytes, path).into(),
+                                );
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_h.upgrade() {
+                                ui.set_status_banner(format!("Report export failed: {}", e).into());
+                            }
+                        });
+                    }
+                }
+            }
+        });
+    });
+
+    // Wire Callbacks: Host Fingerprint Inspector (CLI `fingerprint` parity)
+    let ui_fp = main_window.as_weak();
+    let sup_fp = supervisor.clone();
+    let st_fp = state.clone();
+    main_window.on_capture_fingerprint_requested(move || {
+        let repo_id = st_fp
+            .lock()
+            .ok()
+            .and_then(|s| s.repos.get(s.selected_repo_idx).map(|r| r.id.clone()));
+        if let Some(ui) = ui_fp.upgrade() {
+            ui.set_status_banner("Capturing deterministic host fingerprint snapshot...".into());
+        }
+        let ui_h = ui_fp.clone();
+        let sup = sup_fp.clone();
+        std::thread::spawn(move || {
+            if let Some(client) = sup.get_client() {
+                let mut params = serde_json::json!({});
+                if let Some(rid) = repo_id {
+                    params["repo_id"] = serde_json::Value::String(rid);
+                }
+                match client.send_request("fingerprint.capture", Some(params), Duration::from_secs(15)) {
+                    Ok(res) => {
+                        let fp_hash = res["fingerprint_sha256"]
+                            .as_str()
+                            .or_else(|| res["fingerprint_hash"].as_str())
+                            .or_else(|| res["hash"].as_str())
+                            .or_else(|| res["id"].as_str())
+                            .unwrap_or("captured")
+                            .to_string();
+                        let json_pretty = res["json_pretty"]
+                            .as_str()
+                            .map(|s| s.to_string())
+                            .unwrap_or_else(|| serde_json::to_string_pretty(&res).unwrap_or_default());
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_h.upgrade() {
+                                ui.set_host_fingerprint_hash(fp_hash.clone().into());
+                                ui.set_host_fingerprint_json(json_pretty.into());
+                                ui.set_status_banner(format!("Host fingerprint captured: {}", fp_hash).into());
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_h.upgrade() {
+                                ui.set_status_banner(format!("Fingerprint capture failed: {}", e).into());
+                            }
+                        });
+                    }
                 }
             }
         });

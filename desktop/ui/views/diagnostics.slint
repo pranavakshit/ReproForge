@@ -4,6 +4,7 @@ import { ActionButton } from "../components/action_button.slint";
 import { PanelCard } from "../components/panel_card.slint";
 import { ProgressMeter } from "../components/progress_meter.slint";
 import { StatusBadge } from "../components/status_badge.slint";
+import { IconExport, IconFolder } from "../components/icons.slint";
 
 export struct DiffEntry {
     path: string,
@@ -35,8 +36,16 @@ export component DiagnosticsView inherits Rectangle {
     in property <string> selected_diff_snippet: "";
     in property <[DiagnosticFindingItem]> diagnostic_findings: [];
 
+    // CLI `reproforge compare <a1> <a2>` & `ReportExporter` parity inputs
+    in-out property <string> custom_path_a: "";
+    in-out property <string> custom_path_b: "";
+
     callback diff_entry_selected(int);
     callback compare_latest_requested();
+    callback pick_custom_path_a_requested();
+    callback pick_custom_path_b_requested();
+    callback compare_custom_paths_requested();
+    callback export_report_requested(string);
 
     background: Theme.bg-canvas;
 
@@ -47,7 +56,7 @@ export component DiagnosticsView inherits Rectangle {
         // Top Comparison Header + CRI Metric Vector Decomposition
         PanelCard {
             title: "Pairwise Comparison & CRI Metric Vector";
-            subtitle: "Granular archive diff inspection & evidence-backed root cause analysis";
+            subtitle: "Granular archive diff inspection, CLI artifact compare parity, and report exports";
 
             HorizontalLayout {
                 spacing: 16px;
@@ -58,7 +67,7 @@ export component DiagnosticsView inherits Rectangle {
                     Text { text: "MODE A: " + root.diag_target_a; color: Theme.text-code; font-size: 11.5px; font-weight: 600; overflow: elide; }
                     Text { text: "MODE B: " + root.diag_target_b; color: Theme.text-code; font-size: 11.5px; font-weight: 600; overflow: elide; }
                     HorizontalLayout {
-                        spacing: 8px;
+                        spacing: 6px;
                         Text { text: "Verdict:"; color: Theme.text-muted; font-size: 11.5px; vertical-alignment: center; }
                         StatusBadge {
                             text: root.diag_verdict;
@@ -73,6 +82,28 @@ export component DiagnosticsView inherits Rectangle {
                             variant: "secondary";
                             btn-height: 26px;
                             clicked => { root.compare_latest_requested(); }
+                        }
+                        ActionButton {
+                            label: "HTML";
+                            variant: "ghost";
+                            btn-height: 26px;
+                            h-pad: 8px;
+                            clicked => { root.export_report_requested("html"); }
+                            IconExport { icon-size: 11px; icon-color: Theme.text-secondary; }
+                        }
+                        ActionButton {
+                            label: "CSV";
+                            variant: "ghost";
+                            btn-height: 26px;
+                            h-pad: 8px;
+                            clicked => { root.export_report_requested("csv"); }
+                        }
+                        ActionButton {
+                            label: "JSON";
+                            variant: "ghost";
+                            btn-height: 26px;
+                            h-pad: 8px;
+                            clicked => { root.export_report_requested("json"); }
                         }
                     }
                 }
@@ -100,6 +131,75 @@ export component DiagnosticsView inherits Rectangle {
                     }
                 }
             }
+
+            // Custom Compare Bar (`reproforge compare <a1> <a2>`)
+            HorizontalLayout {
+                spacing: 8px;
+                Text { text: "Compare Paths:"; color: Theme.text-muted; font-size: 11px; vertical-alignment: center; }
+
+                Rectangle {
+                    horizontal-stretch: 1;
+                    height: 28px;
+                    background: Theme.bg-input;
+                    border-radius: Theme.radius-xs;
+                    border-width: 1px;
+                    border-color: Theme.border-subtle;
+                    clip: true;
+                    pa := TextInput {
+                        x: 8px;
+                        y: 5px;
+                        width: parent.width - 16px;
+                        text <=> root.custom_path_a;
+                        color: Theme.text-code;
+                        font-size: 11px;
+                        single-line: true;
+                    }
+                    if pa.text == "" && !pa.has-focus: Text { x: 8px; y: 6px; text: "Artifact 1 path (.whl / .tar / .zip / file)..."; color: Theme.text-muted; font-size: 10.5px; }
+                }
+                ActionButton {
+                    label: "File A";
+                    variant: "secondary";
+                    btn-height: 28px;
+                    h-pad: 9px;
+                    clicked => { root.pick_custom_path_a_requested(); }
+                    IconFolder { icon-size: 11px; icon-color: Theme.text-secondary; }
+                }
+
+                Rectangle {
+                    horizontal-stretch: 1;
+                    height: 28px;
+                    background: Theme.bg-input;
+                    border-radius: Theme.radius-xs;
+                    border-width: 1px;
+                    border-color: Theme.border-subtle;
+                    clip: true;
+                    pb := TextInput {
+                        x: 8px;
+                        y: 5px;
+                        width: parent.width - 16px;
+                        text <=> root.custom_path_b;
+                        color: Theme.text-code;
+                        font-size: 11px;
+                        single-line: true;
+                    }
+                    if pb.text == "" && !pb.has-focus: Text { x: 8px; y: 6px; text: "Artifact 2 path (.whl / .tar / .zip / file)..."; color: Theme.text-muted; font-size: 10.5px; }
+                }
+                ActionButton {
+                    label: "File B";
+                    variant: "secondary";
+                    btn-height: 28px;
+                    h-pad: 9px;
+                    clicked => { root.pick_custom_path_b_requested(); }
+                    IconFolder { icon-size: 11px; icon-color: Theme.text-secondary; }
+                }
+
+                ActionButton {
+                    label: "Compare Files";
+                    variant: "primary";
+                    btn-height: 28px;
+                    clicked => { root.compare_custom_paths_requested(); }
+                }
+            }
         }
 
         // Main Split: Left File/Byte Diffs + Right RCA Findings
@@ -107,7 +207,6 @@ export component DiagnosticsView inherits Rectangle {
             vertical-stretch: 1;
             spacing: 16px;
 
-            // Left File-Level Diff Table + Snippet Preview
             PanelCard {
                 horizontal-stretch: 3;
                 title: "Artifact Entry Differences (" + root.diff_entries.length + ")";
@@ -181,7 +280,6 @@ export component DiagnosticsView inherits Rectangle {
                     }
                 }
 
-                // Inline Bounded Diff Snippet Viewer
                 if root.selected_diff_snippet != "": Rectangle {
                     vertical-stretch: 1;
                     min-height: 90px;
@@ -206,7 +304,6 @@ export component DiagnosticsView inherits Rectangle {
                 }
             }
 
-            // Right Diagnostic Findings & Epistemic Provenance
             PanelCard {
                 horizontal-stretch: 2;
                 title: "Diagnostic Root Causes (" + root.diagnostic_findings.length + ")";
@@ -225,61 +322,64 @@ export component DiagnosticsView inherits Rectangle {
 
                 if root.diagnostic_findings.length > 0: ListView {
                     vertical-stretch: 1;
-                    for f in root.diagnostic_findings: Rectangle {
-                        min-height: 116px;
-                        background: Theme.bg-elevated;
-                        border-radius: Theme.radius-sm;
-                        border-width: 1px;
-                        border-color: Theme.border-subtle;
+                    for f in root.diagnostic_findings: VerticalLayout {
+                        padding-bottom: 6px;
+                        Rectangle {
+                            min-height: 116px;
+                            background: Theme.bg-elevated;
+                            border-radius: Theme.radius-sm;
+                            border-width: 1px;
+                            border-color: Theme.border-subtle;
 
-                        VerticalLayout {
-                            padding: 10px;
-                            spacing: 6px;
-
-                            HorizontalLayout {
+                            VerticalLayout {
+                                padding: 10px;
                                 spacing: 6px;
-                                StatusBadge {
-                                    text: f.epistemic_status;
-                                    kind:
-                                        f.epistemic_status == "EXPERIMENTALLY_VALIDATED" ? "success" :
-                                        f.epistemic_status == "OBSERVED" ? "info" :
-                                        f.epistemic_status == "INFERRED" ? "warning" :
-                                        "neutral";
+
+                                HorizontalLayout {
+                                    spacing: 6px;
+                                    StatusBadge {
+                                        text: f.epistemic_status;
+                                        kind:
+                                            f.epistemic_status == "EXPERIMENTALLY_VALIDATED" ? "success" :
+                                            f.epistemic_status == "OBSERVED" ? "info" :
+                                            f.epistemic_status == "INFERRED" ? "warning" :
+                                            "neutral";
+                                    }
+                                    StatusBadge {
+                                        text: f.severity;
+                                        kind: f.severity == "HIGH" || f.severity == "CRITICAL" ? "danger" : "warning";
+                                    }
+                                    Text {
+                                        text: f.category;
+                                        color: Theme.text-muted;
+                                        font-size: 10.5px;
+                                        horizontal-stretch: 1;
+                                        horizontal-alignment: right;
+                                        vertical-alignment: center;
+                                    }
                                 }
-                                StatusBadge {
-                                    text: f.severity;
-                                    kind: f.severity == "HIGH" || f.severity == "CRITICAL" ? "danger" : "warning";
-                                }
+
                                 Text {
-                                    text: f.category;
-                                    color: Theme.text-muted;
-                                    font-size: 10.5px;
-                                    horizontal-stretch: 1;
-                                    horizontal-alignment: right;
-                                    vertical-alignment: center;
+                                    text: f.title;
+                                    color: Theme.text-primary;
+                                    font-size: 12px;
+                                    font-weight: 700;
+                                    wrap: word-wrap;
                                 }
-                            }
 
-                            Text {
-                                text: f.title;
-                                color: Theme.text-primary;
-                                font-size: 12px;
-                                font-weight: 700;
-                                wrap: word-wrap;
-                            }
+                                Text {
+                                    text: f.summary;
+                                    color: Theme.text-secondary;
+                                    font-size: 11px;
+                                    wrap: word-wrap;
+                                }
 
-                            Text {
-                                text: f.summary;
-                                color: Theme.text-secondary;
-                                font-size: 11px;
-                                wrap: word-wrap;
-                            }
-
-                            if f.remediation != "": Text {
-                                text: "Fix: " + f.remediation;
-                                color: #6EE7B7;
-                                font-size: 10.5px;
-                                wrap: word-wrap;
+                                if f.remediation != "": Text {
+                                    text: "Fix: " + f.remediation;
+                                    color: #6EE7B7;
+                                    font-size: 10.5px;
+                                    wrap: word-wrap;
+                                }
                             }
                         }
                     }

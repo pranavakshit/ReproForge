@@ -22,9 +22,14 @@ export component BuildsView inherits Rectangle {
     in property <string> selected_hash: "";
     in property <string> selected_artifact_count: "0 artifacts";
     in-out property <string> selected_backend_type: "local";
+    in-out property <string> selected_dependency_mode: "full";
+    in-out property <string> custom_build_cmd: "";
+    in-out property <string> build_timeout_str: "300";
     in property <string> active_target_label: "—";
     in property <bool> docker_available: false;
     in property <int> active_build_count: 0;
+    in property <bool> following_live_build: true;
+    in property <string> viewing_build_label: "";
 
     callback build_row_clicked(int);
     callback trigger_build_requested();
@@ -32,6 +37,8 @@ export component BuildsView inherits Rectangle {
     callback compare_latest_requested();
     callback cancel_build_requested();
     callback backend_type_selected(string);
+    callback dependency_mode_selected(string);
+    callback follow_live_requested();
 
     background: Theme.bg-canvas;
 
@@ -49,31 +56,31 @@ export component BuildsView inherits Rectangle {
                 spacing: 12px;
 
                 HorizontalLayout {
-                    spacing: 10px;
+                    spacing: 8px;
 
                     Text {
-                        text: "Isolation Mode:";
+                        text: "Isolation:";
                         color: Theme.text-secondary;
-                        font-size: 12px;
+                        font-size: 11.5px;
                         font-weight: 600;
                         vertical-alignment: center;
                     }
 
                     // Docker Backend Option
                     Rectangle {
-                        height: 30px;
+                        height: 28px;
                         border-radius: Theme.radius-sm;
                         background: root.selected_backend_type == "docker" ? Theme.accent-primary-soft : Theme.bg-elevated;
                         border-width: 1px;
                         border-color: root.selected_backend_type == "docker" ? Theme.accent-primary : Theme.border-muted;
 
                         HorizontalLayout {
-                            padding-left: 11px;
-                            padding-right: 11px;
+                            padding-left: 10px;
+                            padding-right: 10px;
                             Text {
                                 text: root.docker_available ? "Docker Container (Isolated)" : "Docker Container (Unavailable)";
                                 color: !root.docker_available ? Theme.text-muted : (root.selected_backend_type == "docker" ? #93C5FD : Theme.text-secondary);
-                                font-size: 11.5px;
+                                font-size: 11px;
                                 font-weight: 600;
                                 vertical-alignment: center;
                             }
@@ -90,19 +97,19 @@ export component BuildsView inherits Rectangle {
 
                     // Local Sandbox Option
                     Rectangle {
-                        height: 30px;
+                        height: 28px;
                         border-radius: Theme.radius-sm;
                         background: root.selected_backend_type == "local" ? Theme.status-warning-soft : Theme.bg-elevated;
                         border-width: 1px;
                         border-color: root.selected_backend_type == "local" ? Theme.status-warning : Theme.border-muted;
 
                         HorizontalLayout {
-                            padding-left: 11px;
-                            padding-right: 11px;
+                            padding-left: 10px;
+                            padding-right: 10px;
                             Text {
                                 text: "Local Host Sandbox";
                                 color: root.selected_backend_type == "local" ? #FCD34D : Theme.text-secondary;
-                                font-size: 11.5px;
+                                font-size: 11px;
                                 font-weight: 600;
                                 vertical-alignment: center;
                             }
@@ -112,6 +119,34 @@ export component BuildsView inherits Rectangle {
                             clicked => {
                                 root.selected_backend_type = "local";
                                 root.backend_type_selected("local");
+                            }
+                        }
+                    }
+
+                    // Dependency Mode Toggle (Option A Cached Full Deps default vs Option B Source-Only)
+                    Rectangle {
+                        height: 28px;
+                        border-radius: Theme.radius-sm;
+                        background: root.selected_dependency_mode == "full" ? Theme.status-success-soft : Theme.bg-elevated;
+                        border-width: 1px;
+                        border-color: root.selected_dependency_mode == "full" ? Theme.status-success : Theme.border-muted;
+
+                        HorizontalLayout {
+                            padding-left: 10px;
+                            padding-right: 10px;
+                            Text {
+                                text: root.selected_dependency_mode == "full" ? "Deps: Full (Cached Wheelhouse)" : "Deps: Source-Only (Fast)";
+                                color: root.selected_dependency_mode == "full" ? #6EE7B7 : Theme.text-secondary;
+                                font-size: 11px;
+                                font-weight: 600;
+                                vertical-alignment: center;
+                            }
+                        }
+                        TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                root.selected_dependency_mode = root.selected_dependency_mode == "full" ? "source_only" : "full";
+                                root.dependency_mode_selected(root.selected_dependency_mode);
                             }
                         }
                     }
@@ -128,26 +163,26 @@ export component BuildsView inherits Rectangle {
                     ActionButton {
                         label: root.active_build_count > 0 ? ("Running (" + root.active_build_count + ")") : "Verify Reproducibility (2x + Compare)";
                         variant: "primary";
-                        btn-height: 32px;
+                        btn-height: 30px;
                         clicked => { root.verify_pair_requested(); }
                         IconPlay { icon-size: 11px; icon-color: #FFFFFF; }
                     }
                     ActionButton {
                         label: "Single Build";
                         variant: "secondary";
-                        btn-height: 32px;
+                        btn-height: 30px;
                         clicked => { root.trigger_build_requested(); }
                     }
                     ActionButton {
                         label: "Compare Latest 2";
                         variant: "secondary";
-                        btn-height: 32px;
+                        btn-height: 30px;
                         clicked => { root.compare_latest_requested(); }
                     }
                     ActionButton {
                         label: "Abort";
                         variant: "danger";
-                        btn-height: 32px;
+                        btn-height: 30px;
                         disabled: root.active_build_count == 0;
                         clicked => { root.cancel_build_requested(); }
                         IconStop { icon-size: 11px; icon-color: root.active_build_count == 0 ? Theme.text-muted : #FCA5A5; }
@@ -155,8 +190,71 @@ export component BuildsView inherits Rectangle {
                 }
             }
 
-            if root.selected_backend_type == "local": Text {
-                text: "Host sandbox uses clean exported git trees and allowlisted environment variables; prefer Docker isolation when available.";
+            // CLI `--command` & `--timeout` Parity Override Bar
+            HorizontalLayout {
+                spacing: 10px;
+                Text {
+                    text: "Command Override:";
+                    color: Theme.text-muted;
+                    font-size: 11px;
+                    vertical-alignment: center;
+                }
+                Rectangle {
+                    horizontal-stretch: 1;
+                    height: 28px;
+                    background: Theme.bg-input;
+                    border-radius: Theme.radius-xs;
+                    border-width: 1px;
+                    border-color: cmd-inp.has-focus ? Theme.border-active : Theme.border-subtle;
+                    clip: true;
+
+                    cmd-inp := TextInput {
+                        x: 8px;
+                        y: 5px;
+                        width: parent.width - 16px;
+                        text <=> root.custom_build_cmd;
+                        color: Theme.text-code;
+                        font-size: 11px;
+                        single-line: true;
+                    }
+                    if cmd-inp.text == "" && !cmd-inp.has-focus: Text {
+                        x: 8px;
+                        y: 6px;
+                        text: "Auto-detected (optional override like: python -m compileall .)";
+                        color: Theme.text-muted;
+                        font-size: 11px;
+                    }
+                }
+                Text {
+                    text: "Timeout (s):";
+                    color: Theme.text-muted;
+                    font-size: 11px;
+                    vertical-alignment: center;
+                }
+                Rectangle {
+                    width: 68px;
+                    height: 28px;
+                    background: Theme.bg-input;
+                    border-radius: Theme.radius-xs;
+                    border-width: 1px;
+                    border-color: tmo-inp.has-focus ? Theme.border-active : Theme.border-subtle;
+
+                    tmo-inp := TextInput {
+                        x: 8px;
+                        y: 5px;
+                        width: parent.width - 16px;
+                        text <=> root.build_timeout_str;
+                        color: Theme.text-code;
+                        font-size: 11px;
+                        single-line: true;
+                    }
+                }
+            }
+
+            Text {
+                text: root.selected_backend_type == "docker"
+                    ? "Docker Container (Isolated): runs fresh container (--network=none, pulled logs + inspect before rm). Full mode caches wheels once per requirements.txt."
+                    : "Local Host Sandbox: exports clean git archive into isolated workspace .venv stripped of ambient env keys.";
                 color: Theme.text-muted;
                 font-size: 10.5px;
             }
@@ -167,16 +265,16 @@ export component BuildsView inherits Rectangle {
             vertical-stretch: 1;
             spacing: 16px;
 
-            // Left Build Execution List
+            // Left Build Execution List (Latest to Oldest)
             PanelCard {
                 horizontal-stretch: 2;
                 title: "Execution History (" + root.builds.length + ")";
-                subtitle: "Click a build to load full SHA-256 fingerprint & execution logs";
+                subtitle: "Newest builds shown at top • Click a row to pin its persisted log";
 
                 if root.builds.length == 0: Rectangle {
                     vertical-stretch: 1;
                     Text {
-                        text: "No builds found. Select a tracked repository and click Trigger Verification Build.";
+                        text: "No builds found. Select a tracked repository and click Verify Reproducibility.";
                         color: Theme.text-muted;
                         font-size: 12px;
                         horizontal-alignment: center;
@@ -187,67 +285,70 @@ export component BuildsView inherits Rectangle {
 
                 if root.builds.length > 0: ListView {
                     vertical-stretch: 1;
-                    for b[idx] in root.builds: Rectangle {
-                        height: 62px;
-                        border-radius: Theme.radius-sm;
-                        background: idx == root.selected_build_idx ? Theme.accent-primary-soft : (b-ta.has-hover ? Theme.bg-hover : Theme.bg-elevated);
-                        border-width: 1px;
-                        border-color: idx == root.selected_build_idx ? Theme.accent-primary : Theme.border-subtle;
+                    for b[idx] in root.builds: VerticalLayout {
+                        padding-bottom: 4px;
+                        Rectangle {
+                            height: 62px;
+                            border-radius: Theme.radius-sm;
+                            background: idx == root.selected_build_idx ? Theme.accent-primary-soft : (b-ta.has-hover ? Theme.bg-hover : Theme.bg-elevated);
+                            border-width: 1px;
+                            border-color: idx == root.selected_build_idx ? Theme.accent-primary : Theme.border-subtle;
 
-                        VerticalLayout {
-                            padding: 9px;
-                            spacing: 4px;
+                            VerticalLayout {
+                                padding: 9px;
+                                spacing: 4px;
 
-                            HorizontalLayout {
-                                spacing: 8px;
-                                Text {
-                                    text: b.build_id;
-                                    color: Theme.text-code;
-                                    font-size: 12px;
-                                    font-weight: 700;
-                                    vertical-alignment: center;
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    Text {
+                                        text: b.build_id;
+                                        color: Theme.text-code;
+                                        font-size: 12px;
+                                        font-weight: 700;
+                                        vertical-alignment: center;
+                                    }
+                                    Text {
+                                        text: b.repo + " • " + b.commit;
+                                        color: Theme.text-primary;
+                                        font-size: 12px;
+                                        horizontal-stretch: 1;
+                                        overflow: elide;
+                                        vertical-alignment: center;
+                                    }
+                                    StatusBadge {
+                                        text: b.status;
+                                        kind:
+                                            b.status == "succeeded" || b.status == "completed" ? "success" :
+                                            b.status == "running" || b.status == "pending" ? "info" :
+                                            b.status == "failed" || b.status == "cancelled" || b.status == "timed_out" ? "danger" :
+                                            "neutral";
+                                    }
                                 }
-                                Text {
-                                    text: b.repo + " • " + b.commit;
-                                    color: Theme.text-primary;
-                                    font-size: 12px;
-                                    horizontal-stretch: 1;
-                                    overflow: elide;
-                                    vertical-alignment: center;
-                                }
-                                StatusBadge {
-                                    text: b.status;
-                                    kind:
-                                        b.status == "succeeded" || b.status == "completed" ? "success" :
-                                        b.status == "running" || b.status == "pending" ? "info" :
-                                        b.status == "failed" || b.status == "cancelled" ? "danger" :
-                                        "neutral";
+
+                                HorizontalLayout {
+                                    spacing: 10px;
+                                    Text {
+                                        text: "Backend: " + b.backend;
+                                        color: Theme.text-muted;
+                                        font-size: 10.5px;
+                                    }
+                                    Text {
+                                        text: b.hash_short;
+                                        color: Theme.accent-cyan;
+                                        font-size: 10.5px;
+                                        horizontal-stretch: 1;
+                                        overflow: elide;
+                                        horizontal-alignment: right;
+                                    }
                                 }
                             }
 
-                            HorizontalLayout {
-                                spacing: 10px;
-                                Text {
-                                    text: "Backend: " + b.backend;
-                                    color: Theme.text-muted;
-                                    font-size: 10.5px;
+                            b-ta := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => {
+                                    root.selected_build_idx = idx;
+                                    root.build_row_clicked(idx);
                                 }
-                                Text {
-                                    text: b.hash_short;
-                                    color: Theme.accent-cyan;
-                                    font-size: 10.5px;
-                                    horizontal-stretch: 1;
-                                    overflow: elide;
-                                    horizontal-alignment: right;
-                                }
-                            }
-                        }
-
-                        b-ta := TouchArea {
-                            mouse-cursor: pointer;
-                            clicked => {
-                                root.selected_build_idx = idx;
-                                root.build_row_clicked(idx);
                             }
                         }
                     }
@@ -257,27 +358,41 @@ export component BuildsView inherits Rectangle {
             // Right Artifact Digest & Live Log Output
             PanelCard {
                 horizontal-stretch: 3;
-                title: "Artifact Digest & Execution Console";
+                title: root.viewing_build_label != ""
+                    ? ("Execution Console — " + root.viewing_build_label)
+                    : "Artifact Digest & Execution Console";
                 subtitle: root.selected_artifact_count;
 
-                Rectangle {
-                    height: 44px;
-                    background: Theme.bg-input;
-                    border-radius: Theme.radius-sm;
-                    border-width: 1px;
-                    border-color: Theme.border-subtle;
+                HorizontalLayout {
+                    spacing: 10px;
 
-                    VerticalLayout {
-                        padding-left: 12px;
-                        padding-right: 12px;
-                        alignment: center;
-                        Text {
-                            text: root.selected_hash;
-                            color: Theme.accent-cyan;
-                            font-size: 11.5px;
-                            font-weight: 600;
-                            overflow: elide;
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        height: 40px;
+                        background: Theme.bg-input;
+                        border-radius: Theme.radius-sm;
+                        border-width: 1px;
+                        border-color: Theme.border-subtle;
+
+                        VerticalLayout {
+                            padding-left: 12px;
+                            padding-right: 12px;
+                            alignment: center;
+                            Text {
+                                text: root.selected_hash;
+                                color: Theme.accent-cyan;
+                                font-size: 11.5px;
+                                font-weight: 600;
+                                overflow: elide;
+                            }
                         }
+                    }
+
+                    if root.active_build_count > 0 && !root.following_live_build: ActionButton {
+                        label: "Follow Live Build";
+                        variant: "primary";
+                        btn-height: 40px;
+                        clicked => { root.follow_live_requested(); }
                     }
                 }
 

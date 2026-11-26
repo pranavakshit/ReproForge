@@ -10,6 +10,7 @@ export struct GraphNodeItem {
     node_type: string,
     label: string,
     subtitle: string,
+    details_summary: string,
     epistemic_status: string,
     tier: int,
 }
@@ -17,7 +18,11 @@ export struct GraphNodeItem {
 export struct GraphEdgeItem {
     source_id: string,
     target_id: string,
+    source_label: string,
+    target_label: string,
+    direction: string,
     relation: string,
+    confidence: string,
     epistemic_status: string,
     evidence: string,
 }
@@ -30,7 +35,7 @@ component StageColumn inherits Rectangle {
     callback node-clicked(int);
 
     horizontal-stretch: 1;
-    min-width: 175px;
+    min-width: 170px;
     background: Theme.bg-elevated;
     border-radius: Theme.radius-sm;
     border-width: 1px;
@@ -108,11 +113,11 @@ component StageColumn inherits Rectangle {
 }
 
 component StageArrow inherits VerticalLayout {
-    width: 16px;
+    width: 14px;
     alignment: center;
     Path {
-        width: 14px;
-        height: 14px;
+        width: 12px;
+        height: 12px;
         viewbox-x: 0;
         viewbox-y: 0;
         viewbox-width: 16;
@@ -127,9 +132,11 @@ component StageArrow inherits VerticalLayout {
 export component CausalityGraphView inherits Rectangle {
     in property <[GraphNodeItem]> nodes: [];
     in property <[GraphEdgeItem]> edges: [];
+    in property <int> total_edge_count: 0;
     in-out property <int> selected_node_idx: -1;
 
     callback node_selected(int);
+    callback clear_node_filter();
     callback refresh_graph_requested();
     callback export_dot_requested();
 
@@ -149,7 +156,7 @@ export component CausalityGraphView inherits Rectangle {
                 HorizontalLayout {
                     spacing: 10px;
                     Text {
-                        text: root.nodes.length + " nodes • " + root.edges.length + " causal edges";
+                        text: root.nodes.length + " nodes • " + root.total_edge_count + " causal edges";
                         color: Theme.text-primary;
                         font-size: 12.5px;
                         font-weight: 700;
@@ -163,6 +170,15 @@ export component CausalityGraphView inherits Rectangle {
 
                 HorizontalLayout {
                     spacing: 10px;
+                    if root.selected_node_idx >= 0: ActionButton {
+                        label: "Show All Edges";
+                        variant: "ghost";
+                        btn-height: 30px;
+                        clicked => {
+                            root.selected_node_idx = -1;
+                            root.clear_node_filter();
+                        }
+                    }
                     ActionButton {
                         label: "Refresh DAG";
                         variant: "secondary";
@@ -185,7 +201,7 @@ export component CausalityGraphView inherits Rectangle {
         PanelCard {
             vertical-stretch: 3;
             title: "Directed Acyclic Causality Flow";
-            subtitle: "Click any entity node across causal stages to inspect supporting evidence edges";
+            subtitle: "Click any entity node across causal stages to filter & inspect its incoming/outgoing provenance links";
 
             HorizontalLayout {
                 vertical-stretch: 1;
@@ -203,18 +219,45 @@ export component CausalityGraphView inherits Rectangle {
             }
         }
 
-        // Bottom Causal Edges & Node Evidence Inspector
+        // Bottom Enriched Causal Links & Selected Node Details Inspector
         PanelCard {
-            vertical-stretch: 2;
+            vertical-stretch: 3;
             title: (root.selected_node_idx >= 0 && root.selected_node_idx < root.nodes.length)
-                ? ("Causal Links for Node: " + root.nodes[root.selected_node_idx].label)
-                : "Evidence-Backed Causal Edges (" + root.edges.length + ")";
-            subtitle: "Edges track causal provenance with strict epistemic verification tags";
+                ? ("Causal Links for: " + root.nodes[root.selected_node_idx].label + " (" + root.edges.length + " connected)")
+                : "All Evidence-Backed Causal Edges (" + root.edges.length + ")";
+            subtitle: "Human-readable provenance chains showing exact node connections, confidence, and supporting evidence";
+
+            if root.selected_node_idx >= 0 && root.selected_node_idx < root.nodes.length && root.nodes[root.selected_node_idx].details_summary != "": Rectangle {
+                background: Theme.accent-primary-soft;
+                border-radius: Theme.radius-xs;
+                border-width: 1px;
+                border-color: #264882;
+
+                HorizontalLayout {
+                    padding: 9px;
+                    spacing: 10px;
+                    StatusBadge { text: root.nodes[root.selected_node_idx].node_type; kind: "info"; }
+                    Text {
+                        text: root.nodes[root.selected_node_idx].details_summary;
+                        color: #DBEAFE;
+                        font-size: 11px;
+                        horizontal-stretch: 1;
+                        wrap: word-wrap;
+                        vertical-alignment: center;
+                    }
+                    StatusBadge {
+                        text: root.nodes[root.selected_node_idx].epistemic_status;
+                        kind: root.nodes[root.selected_node_idx].epistemic_status == "EXPERIMENTALLY_VALIDATED" ? "success" : "info";
+                    }
+                }
+            }
 
             if root.edges.length == 0: Rectangle {
                 vertical-stretch: 1;
                 Text {
-                    text: "No causal edges generated yet. Trigger a build comparison to synthesize the DAG.";
+                    text: root.selected_node_idx >= 0
+                        ? "No direct causal edges attached to this node."
+                        : "No causal edges generated yet. Trigger a build comparison to synthesize the DAG.";
                     color: Theme.text-muted;
                     font-size: 12px;
                     horizontal-alignment: center;
@@ -224,27 +267,65 @@ export component CausalityGraphView inherits Rectangle {
 
             if root.edges.length > 0: ListView {
                 vertical-stretch: 1;
-                for edge in root.edges: Rectangle {
-                    height: 36px;
-                    background: Theme.bg-elevated;
-                    border-radius: Theme.radius-xs;
-                    border-width: 1px;
-                    border-color: Theme.border-subtle;
+                for edge in root.edges: VerticalLayout {
+                    padding-bottom: 6px;
+                    Rectangle {
+                        min-height: 58px;
+                        background: Theme.bg-elevated;
+                        border-radius: Theme.radius-xs;
+                        border-width: 1px;
+                        border-color: Theme.border-subtle;
 
-                    HorizontalLayout {
-                        padding-left: 10px;
-                        padding-right: 10px;
-                        spacing: 10px;
-
-                        Text { text: edge.source_id; color: Theme.text-code; font-size: 11px; width: 130px; overflow: elide; vertical-alignment: center; }
-                        Text { text: "-> [" + edge.relation + "] ->"; color: Theme.accent-cyan; font-size: 10.5px; font-weight: 700; width: 155px; horizontal-alignment: center; vertical-alignment: center; }
-                        Text { text: edge.target_id; color: Theme.text-code; font-size: 11px; width: 130px; overflow: elide; vertical-alignment: center; }
-                        Text { text: edge.evidence; color: Theme.text-secondary; font-size: 11px; horizontal-stretch: 1; overflow: elide; vertical-alignment: center; }
                         VerticalLayout {
-                            alignment: center;
-                            StatusBadge {
-                                text: edge.epistemic_status;
-                                kind: edge.epistemic_status == "EXPERIMENTALLY_VALIDATED" ? "success" : (edge.epistemic_status == "OBSERVED" ? "info" : "warning");
+                            padding: 9px;
+                            spacing: 4px;
+
+                            HorizontalLayout {
+                                spacing: 8px;
+                                if edge.direction != "": StatusBadge {
+                                    text: edge.direction;
+                                    kind: edge.direction == "INCOMING" ? "info" : (edge.direction == "OUTGOING" ? "warning" : "neutral");
+                                }
+                                Text {
+                                    text: edge.source_label != "" ? edge.source_label : edge.source_id;
+                                    color: Theme.text-primary;
+                                    font-size: 11.5px;
+                                    font-weight: 600;
+                                    horizontal-stretch: 1;
+                                    overflow: elide;
+                                    vertical-alignment: center;
+                                }
+                                Text {
+                                    text: "-> [" + edge.relation + "] ->";
+                                    color: Theme.accent-cyan;
+                                    font-size: 10.5px;
+                                    font-weight: 700;
+                                    vertical-alignment: center;
+                                }
+                                Text {
+                                    text: edge.target_label != "" ? edge.target_label : edge.target_id;
+                                    color: Theme.text-primary;
+                                    font-size: 11.5px;
+                                    font-weight: 600;
+                                    horizontal-stretch: 1;
+                                    overflow: elide;
+                                    vertical-alignment: center;
+                                }
+                                if edge.confidence != "": StatusBadge {
+                                    text: edge.confidence + " CONF";
+                                    kind: "neutral";
+                                }
+                                StatusBadge {
+                                    text: edge.epistemic_status;
+                                    kind: edge.epistemic_status == "EXPERIMENTALLY_VALIDATED" ? "success" : (edge.epistemic_status == "OBSERVED" ? "info" : "warning");
+                                }
+                            }
+
+                            if edge.evidence != "": Text {
+                                text: edge.evidence;
+                                color: Theme.text-secondary;
+                                font-size: 11px;
+                                wrap: word-wrap;
                             }
                         }
                     }

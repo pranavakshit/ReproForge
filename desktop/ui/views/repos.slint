@@ -17,6 +17,10 @@ export struct RepoItem {
     readiness_status: string,
     readiness_warnings: string,
     last_scanned: string,
+    primary_config: string,
+    lockfile_path: string,
+    declared_deps: int,
+    suggested_cmd: string,
 }
 
 export struct RevisionItem {
@@ -314,6 +318,31 @@ export component ReposView inherits Rectangle {
                                 btn-height: 28px;
                                 clicked => { root.autoscan_repo_requested(); }
                                 IconRefresh { icon-size: 12px; icon-color: Theme.text-secondary; }
+                            }
+                        }
+                    }
+
+                    // CLI `reproforge detect` Parity Details Row
+                    Rectangle {
+                        height: 30px;
+                        background: Theme.bg-deep;
+                        border-radius: Theme.radius-xs;
+                        border-width: 1px;
+                        border-color: Theme.border-subtle;
+                        HorizontalLayout {
+                            padding-left: 10px;
+                            padding-right: 10px;
+                            spacing: 14px;
+                            Text { text: "Config: " + root.repos[root.selected_repo_idx].primary_config; color: Theme.text-code; font-size: 10.5px; vertical-alignment: center; }
+                            Text { text: "Lockfile: " + root.repos[root.selected_repo_idx].lockfile_path; color: Theme.text-secondary; font-size: 10.5px; vertical-alignment: center; }
+                            Text { text: "Deps: " + root.repos[root.selected_repo_idx].declared_deps; color: Theme.accent-cyan; font-size: 10.5px; vertical-alignment: center; }
+                            Text {
+                                text: "Cmd: " + root.repos[root.selected_repo_idx].suggested_cmd;
+                                color: Theme.text-muted;
+                                font-size: 10.5px;
+                                horizontal-stretch: 1;
+                                overflow: elide;
+                                vertical-alignment: center;
                             }
                         }
                     }

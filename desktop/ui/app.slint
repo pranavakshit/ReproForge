@@ -87,10 +87,15 @@ export component MainWindow inherits Window {
     in-out property <string> selected_hash: "Select a build to inspect primary SHA-256";
     in-out property <string> selected_artifact_count: "0 artifacts";
     in-out property <string> selected_backend_type: "local";
+    in-out property <string> selected_dependency_mode: "full";
+    in-out property <string> custom_build_cmd: "";
+    in-out property <string> build_timeout_str: "300";
     in-out property <string> active_target_label: "—";
     in-out property <int> active_build_count: 0;
+    in-out property <bool> following_live_build: true;
+    in-out property <string> viewing_build_label: "";
 
-    // Diff & Diagnostics (Milestone F)
+    // Diff & Diagnostics (Milestone F + CLI Parity)
     in-out property <string> diag_target_a: "Awaiting comparison...";
     in-out property <string> diag_target_b: "Awaiting comparison...";
     in-out property <string> diag_verdict: "UNCOMPARED";
@@ -101,16 +106,20 @@ export component MainWindow inherits Window {
     in-out property <int> diff_selected_idx: -1;
     in-out property <string> selected_diff_snippet: "";
     in-out property <[DiagnosticFindingItem]> diagnostic_findings: [];
+    in-out property <string> custom_compare_path_a: "";
+    in-out property <string> custom_compare_path_b: "";
 
     // Causality Graph (Milestone F)
     in-out property <[GraphNodeItem]> graph_nodes: [];
     in-out property <[GraphEdgeItem]> graph_edges: [];
+    in-out property <int> total_graph_edge_count: 0;
     in-out property <int> selected_graph_node_idx: -1;
 
     // Perturbation Lab (Milestone G)
     in-out property <[PerturbationParam]> perturbation_params: [];
     in-out property <[SensitivityResult]> sensitivity_results: [];
     in-out property <bool> perturbation_running: false;
+    in-out property <bool> perturbation_execute_real_builder: false;
 
     // Passport & Audit (Milestone G)
     in-out property <string> passport_json: "";
@@ -121,11 +130,13 @@ export component MainWindow inherits Window {
     in-out property <[RemediationProposal]> remediation_proposals: [];
     in-out property <int> selected_proposal_idx: -1;
 
-    // Settings & Storage
+    // Settings & Storage + Host Fingerprint Parity
     in-out property <string> storage_db_path: "data/reproforge.db";
     in-out property <string> storage_artifacts_path: "collected_artifacts";
     in-out property <string> storage_workspaces_path: "build_workspaces";
     in-out property <bool> docker_available: false;
+    in-out property <string> host_fingerprint_hash: "";
+    in-out property <string> host_fingerprint_json: "";
 
     // Application Callbacks
     callback refresh_requested();
@@ -139,6 +150,8 @@ export component MainWindow inherits Window {
     callback build_specific_revision_requested(string);
     callback cancel_build_requested();
     callback backend_type_selected(string);
+    callback dependency_mode_selected(string);
+    callback follow_live_requested();
 
     // GitHub Autoscan & Folder Checklist Callbacks
     callback register_local_repo_requested();
@@ -150,19 +163,29 @@ export component MainWindow inherits Window {
     callback confirm_workspace_checklist();
     callback dismiss_workspace_checklist();
 
-    // Diagnostics & Causality Graph Callbacks
+    // Diagnostics, CLI Compare Parity, Report Export & Causality Graph Callbacks
     callback diff_entry_selected(int);
+    callback pick_custom_path_a_requested();
+    callback pick_custom_path_b_requested();
+    callback compare_custom_paths_requested();
+    callback export_report_requested(string);
     callback graph_node_selected(int);
+    callback clear_graph_node_filter();
     callback refresh_graph_requested();
     callback export_dot_requested();
 
-    // Milestone G Callbacks
+    // Milestone G & Fingerprint Callbacks
     callback run_perturbation_campaign_requested();
+    callback perturbation_param_toggled(int);
+    callback perturbation_param_baseline_changed(int, string);
+    callback perturbation_param_perturbed_changed(int, string);
+    callback reset_perturbation_params_requested();
     callback export_passport_json_requested();
     callback export_passport_md_requested();
     callback remediation_proposal_selected(int);
     callback approve_patch_requested(string);
     callback run_verification_rebuild_requested();
+    callback capture_fingerprint_requested();
 
     // Keyboard Shortcuts
     FocusScope {
@@ -320,15 +343,22 @@ export component MainWindow inherits Window {
                         selected_hash: root.selected_hash;
                         selected_artifact_count: root.selected_artifact_count;
                         selected_backend_type <=> root.selected_backend_type;
+                        selected_dependency_mode <=> root.selected_dependency_mode;
+                        custom_build_cmd <=> root.custom_build_cmd;
+                        build_timeout_str <=> root.build_timeout_str;
                         active_target_label: root.active_target_label;
                         docker_available: root.docker_available;
                         active_build_count: root.active_build_count;
+                        following_live_build: root.following_live_build;
+                        viewing_build_label: root.viewing_build_label;
                         build_row_clicked(idx) => { root.build_row_clicked(idx); }
                         trigger_build_requested => { root.trigger_build_requested(); }
                         verify_pair_requested => { root.verify_pair_requested(); }
                         compare_latest_requested => { root.compare_latest_requested(); }
                         cancel_build_requested => { root.cancel_build_requested(); }
                         backend_type_selected(b) => { root.backend_type_selected(b); }
+                        dependency_mode_selected(d) => { root.dependency_mode_selected(d); }
+                        follow_live_requested => { root.follow_live_requested(); }
                     }
 
                     if root.active_tab == 3: DiagnosticsView {
@@ -344,8 +374,14 @@ export component MainWindow inherits Window {
                         diff_selected_idx <=> root.diff_selected_idx;
                         selected_diff_snippet: root.selected_diff_snippet;
                         diagnostic_findings: root.diagnostic_findings;
+                        custom_path_a <=> root.custom_compare_path_a;
+                        custom_path_b <=> root.custom_compare_path_b;
                         diff_entry_selected(idx) => { root.diff_entry_selected(idx); }
                         compare_latest_requested => { root.compare_latest_requested(); }
+                        pick_custom_path_a_requested => { root.pick_custom_path_a_requested(); }
+                        pick_custom_path_b_requested => { root.pick_custom_path_b_requested(); }
+                        compare_custom_paths_requested => { root.compare_custom_paths_requested(); }
+                        export_report_requested(fmt) => { root.export_report_requested(fmt); }
                     }
 
                     if root.active_tab == 4: CausalityGraphView {
@@ -353,8 +389,10 @@ export component MainWindow inherits Window {
                         height: 100%;
                         nodes: root.graph_nodes;
                         edges: root.graph_edges;
+                        total_edge_count: root.total_graph_edge_count;
                         selected_node_idx <=> root.selected_graph_node_idx;
                         node_selected(idx) => { root.graph_node_selected(idx); }
+                        clear_node_filter => { root.clear_graph_node_filter(); }
                         refresh_graph_requested => { root.refresh_graph_requested(); }
                         export_dot_requested => { root.export_dot_requested(); }
                     }
@@ -365,7 +403,12 @@ export component MainWindow inherits Window {
                         params: root.perturbation_params;
                         results: root.sensitivity_results;
                         is_running: root.perturbation_running;
+                        execute_real_builder <=> root.perturbation_execute_real_builder;
                         run_campaign_requested => { root.run_perturbation_campaign_requested(); }
+                        param_toggled(idx) => { root.perturbation_param_toggled(idx); }
+                        param_baseline_changed(idx, val) => { root.perturbation_param_baseline_changed(idx, val); }
+                        param_perturbed_changed(idx, val) => { root.perturbation_param_perturbed_changed(idx, val); }
+                        reset_params_requested => { root.reset_perturbation_params_requested(); }
                     }
 
                     if root.active_tab == 6: PassportView {
@@ -396,6 +439,9 @@ export component MainWindow inherits Window {
                         storage_workspaces_path: root.storage_workspaces_path;
                         docker_available: root.docker_available;
                         app_version: root.app_version;
+                        host_fingerprint_hash: root.host_fingerprint_hash;
+                        host_fingerprint_json: root.host_fingerprint_json;
+                        capture_fingerprint_requested => { root.capture_fingerprint_requested(); }
                     }
                 }
             }
