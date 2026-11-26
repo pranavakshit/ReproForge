@@ -1,6 +1,7 @@
 """Asynchronous JSON-RPC request dispatcher routing calls to shared application services."""
 
 import asyncio
+import json
 import os
 from pathlib import Path
 import time
@@ -29,6 +30,9 @@ from backend.app.services.causality_graph_service import CausalityGraphService
 from backend.app.services.comparison_service import ComparisonService
 from backend.app.services.fingerprint_service import FingerprintService
 from backend.app.services.overview_service import OverviewService
+from backend.app.services.passport_service import PassportService
+from backend.app.services.perturbation_service import PerturbationService
+from backend.app.services.remediation_engine import RemediationEngine
 from backend.app.services.repository_service import RepositoryService
 
 
@@ -61,6 +65,9 @@ class RequestDispatcher:
         repository_service: Optional[RepositoryService] = None,
         overview_service: Optional[OverviewService] = None,
         causality_graph_service: Optional[CausalityGraphService] = None,
+        perturbation_service: Optional[PerturbationService] = None,
+        passport_service: Optional[PassportService] = None,
+        remediation_engine: Optional[RemediationEngine] = None,
         on_notify: Optional[Callable[[str, Dict[str, Any]], None]] = None,
     ) -> None:
         self.build_service = build_service or BuildService()
@@ -69,6 +76,9 @@ class RequestDispatcher:
         self.repository_service = repository_service or RepositoryService()
         self.overview_service = overview_service or OverviewService()
         self.causality_graph_service = causality_graph_service or CausalityGraphService()
+        self.perturbation_service = perturbation_service or PerturbationService()
+        self.passport_service = passport_service or PassportService()
+        self.remediation_engine = remediation_engine or RemediationEngine()
         self.on_notify = on_notify
 
         self.start_time = time.time()
@@ -95,6 +105,14 @@ class RequestDispatcher:
             "comparison.list": self._handle_comparison_list,
             "comparison.get_details": self._handle_comparison_get_details,
             "causality.get_graph": self._handle_causality_get_graph,
+            "perturbation.params": self._handle_perturbation_params,
+            "perturbation.run": self._handle_perturbation_run,
+            "perturbation.list": self._handle_perturbation_list,
+            "passport.get": self._handle_passport_get,
+            "passport.export": self._handle_passport_export,
+            "remediation.list_proposals": self._handle_remediation_list_proposals,
+            "remediation.approve": self._handle_remediation_approve,
+            "remediation.verify_rebuild": self._handle_remediation_verify_rebuild,
         }
 
     def notify(self, method: str, params: Dict[str, Any]) -> None:
@@ -510,8 +528,82 @@ class RequestDispatcher:
             return {"nodes": [], "edges": []}
         return graph
 
+    async def _handle_perturbation_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        repo_id = params.get("repository_id")
+        return {
+            "params": self.perturbation_service.list_default_parameters(),
+            "campaigns": self.perturbation_service.load_campaigns(repository_id=repo_id),
+        }
+
+    async def _handle_perturbation_run(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        repo_id = params.get("repository_id")
+        if not repo_id:
+            repos = await self.repository_service.list_repositories()
+            if not repos:
+                raise ValueError("No tracked repositories available for perturbation campaign")
+            repo_id = repos[0].id
+        return await self.perturbation_service.run_campaign(
+            repository_id=repo_id,
+            commit_ref=params.get("commit_ref", "HEAD"),
+            param_names=params.get("param_names"),
+            execute_real_builder=bool(params.get("execute_real_builder", False)),
+        )
+
+    async def _handle_perturbation_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        campaigns = self.perturbation_service.load_campaigns(repository_id=params.get("repository_id"))
+        return {"campaigns": campaigns}
+
+    async def _handle_passport_get(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        passport = await self.passport_service.generate_passport(
+            repository_id=params.get("repository_id")
+        )
+        return {"passport": passport, "json_pretty": json.dumps(passport, indent=2)}
+
+    async def _handle_passport_export(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        return await self.passport_service.export_passport(
+            repository_id=params.get("repository_id"),
+            fmt=params.get("format", "json"),
+        )
+
+    async def _handle_remediation_list_proposals(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        proposals = await self.remediation_engine.list_proposals(
+            repository_id=params.get("repository_id")
+        )
+        return {"proposals": proposals}
+
+    async def _handle_remediation_approve(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        proposal_id = params.get("proposal_id")
+        if not proposal_id:
+            raise ValueError("proposal_id is required")
+        return await self.remediation_engine.approve_and_verify(
+            proposal_id=proposal_id,
+            repository_id=params.get("repository_id"),
+            approved=bool(params.get("approved", False)),
+        )
+
+    async def _handle_remediation_verify_rebuild(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        proposal_id = params.get("proposal_id")
+        if not proposal_id:
+            proposals = await self.remediation_engine.list_proposals(
+                repository_id=params.get("repository_id")
+            )
+            eligible = next((p for p in proposals if p["tier"] != "LEVEL_3"), None)
+            if not eligible:
+                return {"status": "NO_ELIGIBLE_PROPOSALS", "verified": False}
+            proposal_id = eligible["id"]
+        return await self.remediation_engine.approve_and_verify(
+            proposal_id=proposal_id,
+            repository_id=params.get("repository_id"),
+            approved=bool(params.get("approved", True)),
+        )
+
     async def _handle_build_trigger(self, params: Dict[str, Any]) -> Dict[str, Any]:
         repo_path_str = params.get("repo_path")
+        if not repo_path_str and params.get("repository_id"):
+            repos = await self.repository_service.list_repositories()
+            match = next((r for r in repos if r.id == params["repository_id"]), None)
+            if match:
+                repo_path_str = match.repo_url
         if not repo_path_str:
             repo_path_str = str(settings.BASE_DIR)
         repo_path = Path(repo_path_str)

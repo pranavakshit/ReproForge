@@ -549,13 +549,118 @@ fn sync_causality_graph(ui_handle: slint::Weak<MainWindow>, client: &IpcClient, 
     }
 }
 
+fn sync_perturbation(ui_handle: slint::Weak<MainWindow>, client: &IpcClient, repo_id: Option<&str>) {
+    let params = match repo_id {
+        Some(rid) => serde_json::json!({ "repository_id": rid }),
+        None => serde_json::json!({}),
+    };
+    if let Ok(val) = client.send_request("perturbation.params", Some(params), Duration::from_secs(5)) {
+        let p_items: Vec<PerturbationParam> = val["params"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .map(|p| PerturbationParam {
+                        name: p["name"].as_str().unwrap_or("").into(),
+                        baseline_val: p["baseline_val"].as_str().unwrap_or("").into(),
+                        perturbed_val: p["perturbed_val"].as_str().unwrap_or("").into(),
+                        description: p["description"].as_str().unwrap_or("").into(),
+                        enabled: p["enabled"].as_bool().unwrap_or(true),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let s_items: Vec<SensitivityResult> = val["campaigns"]
+            .as_array()
+            .and_then(|c| c.first())
+            .and_then(|c| c["results"].as_array())
+            .map(|arr| {
+                arr.iter()
+                    .map(|r| SensitivityResult {
+                        param_name: r["param_name"].as_str().unwrap_or("").into(),
+                        baseline_verdict: r["baseline_verdict"].as_str().unwrap_or("BIT_FOR_BIT").into(),
+                        perturbed_verdict: r["perturbed_verdict"].as_str().unwrap_or("BIT_FOR_BIT").into(),
+                        hash_changed: r["hash_changed"].as_bool().unwrap_or(false),
+                        causal_impact: r["causal_impact"].as_str().unwrap_or("").into(),
+                        epistemic_status: r["epistemic_status"].as_str().unwrap_or("OBSERVED").into(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Some(ui) = ui_handle.upgrade() {
+                ui.set_perturbation_params(ModelRc::new(VecModel::from(p_items)));
+                ui.set_sensitivity_results(ModelRc::new(VecModel::from(s_items)));
+            }
+        });
+    }
+}
+
+fn sync_passport(ui_handle: slint::Weak<MainWindow>, client: &IpcClient, repo_id: Option<&str>) {
+    let params = match repo_id {
+        Some(rid) => serde_json::json!({ "repository_id": rid }),
+        None => serde_json::json!({}),
+    };
+    if let Ok(val) = client.send_request("passport.get", Some(params), Duration::from_secs(5)) {
+        let json_pretty = val["json_pretty"].as_str().unwrap_or("").to_string();
+        let repo_name = val["passport"]["repository"]["name"].as_str().unwrap_or("").to_string();
+        let status = val["passport"]["verification_status"].as_str().unwrap_or("UNVERIFIED").to_string();
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Some(ui) = ui_handle.upgrade() {
+                ui.set_passport_json(json_pretty.into());
+                ui.set_passport_repo(repo_name.into());
+                ui.set_passport_status(status.into());
+            }
+        });
+    }
+}
+
+fn sync_remediation(ui_handle: slint::Weak<MainWindow>, client: &IpcClient, repo_id: Option<&str>) {
+    let params = match repo_id {
+        Some(rid) => serde_json::json!({ "repository_id": rid }),
+        None => serde_json::json!({}),
+    };
+    if let Ok(val) = client.send_request("remediation.list_proposals", Some(params), Duration::from_secs(5)) {
+        let props: Vec<RemediationProposal> = val["proposals"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .map(|p| RemediationProposal {
+                        id: p["id"].as_str().unwrap_or("").into(),
+                        tier: p["tier"].as_str().unwrap_or("LEVEL_2").into(),
+                        title: p["title"].as_str().unwrap_or("").into(),
+                        description: p["description"].as_str().unwrap_or("").into(),
+                        patch_preview: p["patch_preview"].as_str().unwrap_or("").into(),
+                        status: p["status"].as_str().unwrap_or("PENDING").into(),
+                        confidence: p["confidence"].as_str().unwrap_or("—").into(),
+                        requires_approval: p["requires_approval"].as_bool().unwrap_or(true),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let sel_idx = if props.is_empty() { -1 } else { 0 };
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Some(ui) = ui_handle.upgrade() {
+                ui.set_remediation_proposals(ModelRc::new(VecModel::from(props)));
+                ui.set_selected_proposal_idx(sel_idx);
+            }
+        });
+    }
+}
+
 fn sync_all_views(ui_handle: slint::Weak<MainWindow>, client: &IpcClient, state: &Arc<Mutex<AppState>>) {
     sync_overview(ui_handle.clone(), client);
     let sel_repo = state.lock().map(|s| s.selected_repo_idx).unwrap_or(0);
     sync_repositories(ui_handle.clone(), client, state.clone(), sel_repo);
     sync_builds(ui_handle.clone(), client, state.clone());
     sync_diagnostics(ui_handle.clone(), client, state.clone());
-    sync_causality_graph(ui_handle, client, state.clone());
+    sync_causality_graph(ui_handle.clone(), client, state.clone());
+    let repo_id = state.lock().ok().and_then(|s| s.repos.get(s.selected_repo_idx).map(|r| r.id.clone()));
+    sync_perturbation(ui_handle.clone(), client, repo_id.as_deref());
+    sync_passport(ui_handle.clone(), client, repo_id.as_deref());
+    sync_remediation(ui_handle, client, repo_id.as_deref());
 }
 
 fn run_scan_folder_ipc(
@@ -1297,24 +1402,183 @@ fn main() -> Result<(), slint::PlatformError> {
         });
     });
 
-    // Milestone G Placeholders (wired fully in Phase 3)
-    let ui_mg = main_window.as_weak();
+    // Milestone G Callbacks: Perturbation Lab, Reproducibility Passport & 3-Tier Remediation
+    let ui_pert = main_window.as_weak();
+    let sup_pert = supervisor.clone();
+    let st_pert = state.clone();
     main_window.on_run_perturbation_campaign_requested(move || {
-        if let Some(ui) = ui_mg.upgrade() {
-            ui.set_status_banner("Perturbation runner ready (Phase 3 endpoint integration pending).".into());
+        let repo_id = st_pert
+            .lock()
+            .ok()
+            .and_then(|s| s.repos.get(s.selected_repo_idx).map(|r| r.id.clone()));
+        if let Some(ui) = ui_pert.upgrade() {
+            ui.set_perturbation_running(true);
+            ui.set_status_banner("Running single-variable perturbation campaign...".into());
         }
+        let ui_h = ui_pert.clone();
+        let sup = sup_pert.clone();
+        let st = st_pert.clone();
+        std::thread::spawn(move || {
+            if let Some(client) = sup.get_client() {
+                let params = match &repo_id {
+                    Some(rid) => serde_json::json!({ "repository_id": rid }),
+                    None => serde_json::json!({}),
+                };
+                match client.send_request("perturbation.run", Some(params), Duration::from_secs(90)) {
+                    Ok(res) => {
+                        let cid = res["campaign_id"].as_str().unwrap_or("campaign").to_string();
+                        sync_perturbation(ui_h.clone(), &client, repo_id.as_deref());
+                        sync_diagnostics(ui_h.clone(), &client, st.clone());
+                        sync_causality_graph(ui_h.clone(), &client, st);
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_h.upgrade() {
+                                ui.set_perturbation_running(false);
+                                ui.set_status_banner(format!("Perturbation campaign {} completed.", cid).into());
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_h.upgrade() {
+                                ui.set_perturbation_running(false);
+                                ui.set_status_banner(format!("Perturbation failed: {}", e).into());
+                            }
+                        });
+                    }
+                }
+            }
+        });
     });
-    let ui_mg2 = main_window.as_weak();
+
+    let ui_pjson = main_window.as_weak();
+    let sup_pjson = supervisor.clone();
+    let st_pjson = state.clone();
     main_window.on_export_passport_json_requested(move || {
-        if let Some(ui) = ui_mg2.upgrade() {
-            ui.set_status_banner("Passport exporter ready (Phase 3 endpoint integration pending).".into());
-        }
+        let repo_id = st_pjson
+            .lock()
+            .ok()
+            .and_then(|s| s.repos.get(s.selected_repo_idx).map(|r| r.id.clone()));
+        let ui_h = ui_pjson.clone();
+        let sup = sup_pjson.clone();
+        std::thread::spawn(move || {
+            if let Some(client) = sup.get_client() {
+                let mut params = serde_json::json!({ "format": "json" });
+                if let Some(rid) = repo_id {
+                    params["repository_id"] = serde_json::Value::String(rid);
+                }
+                if let Ok(res) = client.send_request("passport.export", Some(params), Duration::from_secs(10)) {
+                    let path = res["file_path"].as_str().unwrap_or("passport.v1.json").to_string();
+                    let content = res["content"].as_str().unwrap_or("").to_string();
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = ui_h.upgrade() {
+                            if !content.is_empty() {
+                                ui.set_passport_json(content.into());
+                            }
+                            ui.set_status_banner(format!("Exported Reproducibility Passport JSON to {}", path).into());
+                        }
+                    });
+                }
+            }
+        });
     });
-    let ui_mg3 = main_window.as_weak();
+
+    let ui_pmd = main_window.as_weak();
+    let sup_pmd = supervisor.clone();
+    let st_pmd = state.clone();
     main_window.on_export_passport_md_requested(move || {
-        if let Some(ui) = ui_mg3.upgrade() {
-            ui.set_status_banner("Markdown passport exporter ready (Phase 3 endpoint integration pending).".into());
-        }
+        let repo_id = st_pmd
+            .lock()
+            .ok()
+            .and_then(|s| s.repos.get(s.selected_repo_idx).map(|r| r.id.clone()));
+        let ui_h = ui_pmd.clone();
+        let sup = sup_pmd.clone();
+        std::thread::spawn(move || {
+            if let Some(client) = sup.get_client() {
+                let mut params = serde_json::json!({ "format": "markdown" });
+                if let Some(rid) = repo_id {
+                    params["repository_id"] = serde_json::Value::String(rid);
+                }
+                if let Ok(res) = client.send_request("passport.export", Some(params), Duration::from_secs(10)) {
+                    let path = res["file_path"].as_str().unwrap_or("passport.md").to_string();
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = ui_h.upgrade() {
+                            ui.set_status_banner(format!("Exported Reproducibility Passport Markdown to {}", path).into());
+                        }
+                    });
+                }
+            }
+        });
+    });
+
+    let ui_app = main_window.as_weak();
+    let sup_app = supervisor.clone();
+    let st_app = state.clone();
+    main_window.on_approve_patch_requested(move |proposal_id| {
+        let pid = proposal_id.to_string();
+        let repo_id = st_app
+            .lock()
+            .ok()
+            .and_then(|s| s.repos.get(s.selected_repo_idx).map(|r| r.id.clone()));
+        let ui_h = ui_app.clone();
+        let sup = sup_app.clone();
+        std::thread::spawn(move || {
+            if let Some(client) = sup.get_client() {
+                let mut params = serde_json::json!({ "proposal_id": pid, "approved": true });
+                if let Some(rid) = &repo_id {
+                    params["repository_id"] = serde_json::Value::String(rid.clone());
+                }
+                match client.send_request("remediation.approve", Some(params), Duration::from_secs(45)) {
+                    Ok(res) => {
+                        let status = res["status"].as_str().unwrap_or("VERIFIED").to_string();
+                        let dig = res["digest_a"].as_str().unwrap_or("").chars().take(16).collect::<String>();
+                        sync_remediation(ui_h.clone(), &client, repo_id.as_deref());
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_h.upgrade() {
+                                ui.set_status_banner(
+                                    format!("Disposable workspace repair {} (SHA-256 {})", status, dig).into(),
+                                );
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_h.upgrade() {
+                                ui.set_status_banner(format!("Remediation blocked/failed: {}", e).into());
+                            }
+                        });
+                    }
+                }
+            }
+        });
+    });
+
+    let ui_vrb = main_window.as_weak();
+    let sup_vrb = supervisor.clone();
+    let st_vrb = state.clone();
+    main_window.on_run_verification_rebuild_requested(move || {
+        let repo_id = st_vrb
+            .lock()
+            .ok()
+            .and_then(|s| s.repos.get(s.selected_repo_idx).map(|r| r.id.clone()));
+        let ui_h = ui_vrb.clone();
+        let sup = sup_vrb.clone();
+        std::thread::spawn(move || {
+            if let Some(client) = sup.get_client() {
+                let mut params = serde_json::json!({ "approved": true });
+                if let Some(rid) = &repo_id {
+                    params["repository_id"] = serde_json::Value::String(rid.clone());
+                }
+                if let Ok(res) = client.send_request("remediation.verify_rebuild", Some(params), Duration::from_secs(45)) {
+                    let status = res["status"].as_str().unwrap_or("VERIFIED").to_string();
+                    sync_remediation(ui_h.clone(), &client, repo_id.as_deref());
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = ui_h.upgrade() {
+                            ui.set_status_banner(format!("Verification rebuild result: {}", status).into());
+                        }
+                    });
+                }
+            }
+        });
     });
 
     // First-Frame Presentation Notifier Hook (benchmark harness compatibility)
