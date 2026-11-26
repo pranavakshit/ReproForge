@@ -27,6 +27,8 @@ export component BuildsView inherits Rectangle {
 
     callback build_row_clicked(int);
     callback trigger_build_requested();
+    callback verify_pair_requested();
+    callback compare_latest_requested();
     callback cancel_build_requested();
     callback backend_type_selected(string);
 
@@ -115,13 +117,25 @@ export component BuildsView inherits Rectangle {
                 }
 
                 HorizontalLayout {
-                    spacing: 10px;
+                    spacing: 8px;
                     ActionButton {
-                        label: root.active_build_count > 0 ? ("Running (" + root.active_build_count + ")") : "Trigger Verification Build";
+                        label: root.active_build_count > 0 ? ("Running (" + root.active_build_count + ")") : "Verify Reproducibility (2x + Compare)";
                         variant: "primary";
                         btn-height: 32px;
-                        clicked => { root.trigger_build_requested(); }
+                        clicked => { root.verify_pair_requested(); }
                         IconPlay { icon-size: 11px; icon-color: #FFFFFF; }
+                    }
+                    ActionButton {
+                        label: "Single Build";
+                        variant: "secondary";
+                        btn-height: 32px;
+                        clicked => { root.trigger_build_requested(); }
+                    }
+                    ActionButton {
+                        label: "Compare Latest 2";
+                        variant: "secondary";
+                        btn-height: 32px;
+                        clicked => { root.compare_latest_requested(); }
                     }
                     ActionButton {
                         label: "Abort";

@@ -78,15 +78,43 @@ class CausalityGraphService:
     def __init__(self, session: Optional[AsyncSession] = None) -> None:
         self._session = session
 
-    async def get_latest_graph(self) -> Optional[Dict[str, Any]]:
-        """Construct graph for the most recent comparison run."""
+    async def get_latest_graph(self, repository_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Construct graph for the most recent comparison run (optionally filtered to one repository)."""
         if self._session:
-            return await self._build_latest_graph(self._session)
+            return await self._build_latest_graph(self._session, repository_id=repository_id)
         async with AsyncSessionLocal() as session:
-            return await self._build_latest_graph(session)
+            return await self._build_latest_graph(session, repository_id=repository_id)
 
-    async def _build_latest_graph(self, session: AsyncSession) -> Optional[Dict[str, Any]]:
-        comp_stmt = select(BuildComparisonModel).order_by(BuildComparisonModel.created_at.desc()).limit(1)
+    async def _build_latest_graph(
+        self, session: AsyncSession, repository_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        if repository_id:
+            bld_ids = [
+                r[0]
+                for r in (
+                    await session.execute(
+                        select(BuildExecutionModel.id).where(
+                            BuildExecutionModel.repository_id == repository_id
+                        )
+                    )
+                ).all()
+            ]
+            if not bld_ids:
+                return None
+            from sqlalchemy import or_
+            comp_stmt = (
+                select(BuildComparisonModel)
+                .where(
+                    or_(
+                        BuildComparisonModel.build_id_1.in_(bld_ids),
+                        BuildComparisonModel.build_id_2.in_(bld_ids),
+                    )
+                )
+                .order_by(BuildComparisonModel.created_at.desc())
+                .limit(1)
+            )
+        else:
+            comp_stmt = select(BuildComparisonModel).order_by(BuildComparisonModel.created_at.desc()).limit(1)
         res = await session.execute(comp_stmt)
         comp = res.scalars().first()
         if not comp:

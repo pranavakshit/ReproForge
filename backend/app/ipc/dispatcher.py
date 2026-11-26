@@ -20,6 +20,7 @@ from backend.app.ipc.protocol import (
 from backend.app.models.entities import (
     ArtifactItemModel,
     BuildComparisonModel,
+    BuildExecutionModel,
     DiagnosticFindingModel,
     DiffFindingModel,
     ReproducibilityScoreModel,
@@ -94,6 +95,7 @@ class RequestDispatcher:
             "build.get_status": self._handle_build_get_status,
             "build.get_details": self._handle_build_get_details,
             "build.trigger": self._handle_build_trigger,
+            "build.verify_pair": self._handle_build_verify_pair,
             "build.cancel": self._handle_build_cancel,
             "repository.list": self._handle_repository_list,
             "repository.register": self._handle_repository_register,
@@ -104,6 +106,7 @@ class RequestDispatcher:
             "comparison.get_latest": self._handle_comparison_get_latest,
             "comparison.list": self._handle_comparison_list,
             "comparison.get_details": self._handle_comparison_get_details,
+            "comparison.compare_latest": self._handle_comparison_compare_latest,
             "causality.get_graph": self._handle_causality_get_graph,
             "perturbation.params": self._handle_perturbation_params,
             "perturbation.run": self._handle_perturbation_run,
@@ -380,67 +383,104 @@ class RequestDispatcher:
         }
 
     async def _handle_comparison_get_latest(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        repository_id = params.get("repository_id")
         async with AsyncSessionLocal() as session:
-            comp_stmt = select(BuildComparisonModel).order_by(BuildComparisonModel.created_at.desc()).limit(1)
+            if repository_id:
+                from sqlalchemy import or_
+                bld_ids = [
+                    r[0]
+                    for r in (
+                        await session.execute(
+                            select(BuildExecutionModel.id).where(
+                                BuildExecutionModel.repository_id == repository_id
+                            )
+                        )
+                    ).all()
+                ]
+                if not bld_ids:
+                    return {"id": None, "verdict": "UNCOMPARED", "diff_entries": [], "diagnostic_findings": []}
+                comp_stmt = (
+                    select(BuildComparisonModel)
+                    .where(
+                        or_(
+                            BuildComparisonModel.build_id_1.in_(bld_ids),
+                            BuildComparisonModel.build_id_2.in_(bld_ids),
+                        )
+                    )
+                    .order_by(BuildComparisonModel.created_at.desc())
+                    .limit(1)
+                )
+            else:
+                comp_stmt = select(BuildComparisonModel).order_by(BuildComparisonModel.created_at.desc()).limit(1)
+
             comp_res = await session.execute(comp_stmt)
             comp = comp_res.scalars().first()
             if not comp:
                 return {
-                    "target_a": "No comparisons recorded",
-                    "target_b": "",
-                    "primary_verdict": "pending",
-                    "cri_score": "1.00",
+                    "id": None,
+                    "build_a_id": "No comparisons yet for this repo",
+                    "build_b_id": "Run 'Verify Reproducibility (2x Build + Compare)'",
+                    "verdict": "UNCOMPARED",
+                    "content_agreement_ratio": 0.0,
+                    "metadata_agreement_ratio": 0.0,
+                    "environment_consistency_score": 0.0,
+                    "composite_reproducibility_index": 0.0,
                     "diff_entries": [],
+                    "diagnostic_findings": [],
                 }
 
             score_stmt = select(ReproducibilityScoreModel).where(ReproducibilityScoreModel.comparison_id == comp.id)
-            score_res = await session.execute(score_stmt)
-            score = score_res.scalars().first()
-            verdict = score.verdict if score else "normalized_reproducible"
-            cri = f"{score.composite_reproducibility_index:.2f}" if (score and score.composite_reproducibility_index is not None) else "0.88"
+            score = (await session.execute(score_stmt)).scalars().first()
+            verdict_raw = (
+                score.verdict
+                if score
+                else ("bit_for_bit_reproducible" if comp.exact_match else ("normalized_reproducible" if comp.normalized_match else "non_reproducible"))
+            )
+            verdict = verdict_raw.upper()
 
-            diff_stmt = select(DiffFindingModel).where(DiffFindingModel.comparison_id == comp.id)
-            diff_res = await session.execute(diff_stmt)
-            diffs = diff_res.scalars().all()
+            diffs = (
+                await session.execute(select(DiffFindingModel).where(DiffFindingModel.comparison_id == comp.id))
+            ).scalars().all()
 
             entries = []
             for d in diffs:
-                detail_str = ""
-                if isinstance(d.details, dict):
-                    detail_str = d.details.get("message") or d.details.get("reason") or ""
-                if not detail_str:
-                    detail_str = f"Diff observed in {d.file_path} ({d.diff_type})"
+                det = d.details if isinstance(d.details, dict) else {}
+                snippet = det.get("diff_snippet") or det.get("message") or det.get("reason") or f"Delta observed in {d.file_path} ({d.diff_type})"
                 entries.append({
-                    "path": d.file_path,
-                    "change_type": d.diff_type,
-                    "detail": detail_str,
+                    "relative_path": d.file_path,
+                    "diff_type": d.diff_type.upper(),
+                    "size_a": int(det.get("size_1", det.get("size_a", 0)) or 0),
+                    "size_b": int(det.get("size_2", det.get("size_b", 0)) or 0),
+                    "diff_snippet": str(snippet),
                 })
 
-            diag_stmt = select(DiagnosticFindingModel).where(DiagnosticFindingModel.comparison_id == comp.id)
-            diag_res = await session.execute(diag_stmt)
-            diags = diag_res.scalars().all()
+            diags = (
+                await session.execute(select(DiagnosticFindingModel).where(DiagnosticFindingModel.comparison_id == comp.id))
+            ).scalars().all()
 
             return {
                 "id": comp.id,
-                "target_a": f"Build {comp.build_id_1[:12]}",
-                "target_b": f"Build {comp.build_id_2[:12]}",
-                "primary_verdict": verdict,
-                "cri_score": cri,
-                "content_agreement_ratio": f"{score.content_agreement_ratio:.2f}" if score else "1.00",
-                "metadata_agreement_ratio": f"{score.metadata_agreement_ratio:.2f}" if score else "1.00",
-                "environment_consistency_score": f"{score.environment_consistency_score:.2f}" if score else "1.00",
+                "build_a_id": comp.build_id_1,
+                "build_b_id": comp.build_id_2,
+                "verdict": verdict,
+                "content_agreement_ratio": float(score.content_agreement_ratio) if score else 1.0,
+                "metadata_agreement_ratio": float(score.metadata_agreement_ratio) if score else 1.0,
+                "environment_consistency_score": float(score.environment_consistency_score) if score else 1.0,
+                "composite_reproducibility_index": float(score.composite_reproducibility_index) if score else 0.0,
                 "diff_entries": entries,
                 "diagnostic_findings": [
                     {
-                        "category": dg.category,
-                        "confidence": dg.confidence,
                         "rule_id": f"RULE-{dg.category.upper().replace(' ', '_')}",
-                        "message": dg.root_cause_summary,
+                        "severity": "HIGH" if dg.confidence.lower() == "high" else "MEDIUM",
+                        "category": dg.category,
+                        "title": dg.category.replace("_", " ").title(),
                         "epistemic_status": (
                             "EXPERIMENTALLY_VALIDATED"
                             if "experimentally_validated" in str(dg.evidence_trail).lower()
-                            else ("INFERRED" if dg.confidence.lower() == "high" else "HYPOTHESIS")
+                            else ("OBSERVED" if "observed" in str(dg.evidence_trail).lower() else ("INFERRED" if dg.confidence.lower() == "high" else "HYPOTHESIS"))
                         ),
+                        "summary": dg.root_cause_summary,
+                        "suggested_remediation": dg.suggested_remediation,
                     }
                     for dg in diags
                 ],
@@ -520,13 +560,137 @@ class RequestDispatcher:
 
     async def _handle_causality_get_graph(self, params: Dict[str, Any]) -> Dict[str, Any]:
         comp_id = params.get("comparison_id")
+        repo_id = params.get("repository_id")
         if comp_id:
             graph = await self.causality_graph_service.get_graph_for_comparison(comp_id)
         else:
-            graph = await self.causality_graph_service.get_latest_graph()
+            graph = await self.causality_graph_service.get_latest_graph(repository_id=repo_id)
         if not graph:
             return {"nodes": [], "edges": []}
         return graph
+
+    async def _handle_comparison_compare_latest(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        repository_id = params.get("repository_id")
+        async with AsyncSessionLocal() as session:
+            stmt = select(BuildExecutionModel).where(BuildExecutionModel.status == "completed")
+            if repository_id:
+                stmt = stmt.where(BuildExecutionModel.repository_id == repository_id)
+            stmt = stmt.order_by(BuildExecutionModel.created_at.desc() if hasattr(BuildExecutionModel, "created_at") else BuildExecutionModel.started_at.desc()).limit(20)
+            builds = list((await session.execute(stmt)).scalars().all())
+            pair: list[tuple[str, Path]] = []
+            for b in builds:
+                art = (
+                    await session.execute(
+                        select(ArtifactItemModel).where(ArtifactItemModel.build_execution_id == b.id)
+                    )
+                ).scalars().first()
+                if art:
+                    p = settings.ARTIFACTS_DIR / b.id / art.relative_path
+                    if p.exists():
+                        pair.append((b.id, p))
+                if len(pair) == 2:
+                    break
+            if len(pair) < 2:
+                raise ValueError("Need at least 2 completed builds with captured artifacts to compare.")
+
+        (b1, p1), (b2, p2) = pair[1], pair[0]
+        outcome = await self.comparison_service.compare_artifacts(p1, p2, build_id_1=b1, build_id_2=b2)
+        return {
+            "comparison_id": outcome.comparison_id,
+            "build_a_id": b1,
+            "build_b_id": b2,
+            "verdict": outcome.assessment.verdict.value.upper(),
+            "cri": round(outcome.assessment.composite_reproducibility_index, 4),
+        }
+
+    async def _handle_build_verify_pair(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Run two isolated builds back-to-back in separate .venvs and compare them end-to-end."""
+        repo_path_str = params.get("repo_path")
+        repo_id = params.get("repository_id")
+        if not repo_path_str and repo_id:
+            repos = await self.repository_service.list_repositories()
+            match = next((r for r in repos if r.id == repo_id), None)
+            if match:
+                repo_path_str = match.repo_url
+        if not repo_path_str:
+            repo_path_str = str(settings.BASE_DIR)
+
+        repo_path = Path(repo_path_str)
+        commit_ref = params.get("commit_ref", "HEAD")
+        backend_type = params.get("backend_type", "local")
+        timeout_seconds = int(params.get("timeout_seconds", 180))
+        custom_cmd = params.get("custom_cmd")
+
+        self.notify("build.progress", {
+            "phase": "verify_pair",
+            "percent": 10,
+            "message": f"[1/3] Running Build A in clean .venv for {repo_path.name} ({commit_ref})...",
+        })
+
+        bid_a = f"vrf-a-{uuid.uuid4().hex[:8]}"
+        out_a = await self.build_service.execute_build(
+            repo_path=repo_path,
+            commit_ref=commit_ref,
+            backend_type=backend_type,
+            custom_cmd=custom_cmd,
+            timeout_seconds=timeout_seconds,
+            build_id=bid_a,
+            on_output_chunk=lambda line: self.notify("build.log_chunk", {"build_id": bid_a, "chunk": f"[Build A] {line}"}),
+        )
+        if out_a.exit_code != 0 or not out_a.artifacts:
+            raise RuntimeError(f"Verification Build A failed (exit={out_a.exit_code}, artifacts={len(out_a.artifacts)})")
+
+        await asyncio.sleep(1.1)
+        self.notify("build.progress", {
+            "phase": "verify_pair",
+            "percent": 50,
+            "message": f"[2/3] Running Build B in clean .venv for {repo_path.name} ({commit_ref})...",
+        })
+
+        bid_b = f"vrf-b-{uuid.uuid4().hex[:8]}"
+        out_b = await self.build_service.execute_build(
+            repo_path=repo_path,
+            commit_ref=commit_ref,
+            backend_type=backend_type,
+            custom_cmd=custom_cmd,
+            timeout_seconds=timeout_seconds,
+            build_id=bid_b,
+            on_output_chunk=lambda line: self.notify("build.log_chunk", {"build_id": bid_b, "chunk": f"[Build B] {line}"}),
+        )
+        if out_b.exit_code != 0 or not out_b.artifacts:
+            raise RuntimeError(f"Verification Build B failed (exit={out_b.exit_code}, artifacts={len(out_b.artifacts)})")
+
+        self.notify("build.progress", {
+            "phase": "comparing",
+            "percent": 85,
+            "message": "[3/3] Comparing Build A vs Build B & running RCA diagnostics...",
+        })
+
+        art_a = settings.ARTIFACTS_DIR / out_a.build_id / out_a.artifacts[0].relative_path
+        art_b = settings.ARTIFACTS_DIR / out_b.build_id / out_b.artifacts[0].relative_path
+        comp_outcome = await self.comparison_service.compare_artifacts(
+            art_a,
+            art_b,
+            build_id_1=out_a.build_id,
+            build_id_2=out_b.build_id,
+        )
+        verdict = comp_outcome.assessment.verdict.value.upper()
+        cri = round(comp_outcome.assessment.composite_reproducibility_index, 4)
+
+        self.notify("build.completed", {
+            "build_id": out_b.build_id,
+            "status": "completed",
+            "primary_hash": out_b.artifacts[0].strict_sha256,
+            "comparison_id": comp_outcome.comparison_id,
+            "verdict": verdict,
+        })
+        return {
+            "build_a_id": out_a.build_id,
+            "build_b_id": out_b.build_id,
+            "comparison_id": comp_outcome.comparison_id,
+            "verdict": verdict,
+            "cri": cri,
+        }
 
     async def _handle_perturbation_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
         repo_id = params.get("repository_id")

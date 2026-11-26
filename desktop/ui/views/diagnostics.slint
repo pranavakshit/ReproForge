@@ -1,5 +1,6 @@
 import { ListView } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
+import { ActionButton } from "../components/action_button.slint";
 import { PanelCard } from "../components/panel_card.slint";
 import { ProgressMeter } from "../components/progress_meter.slint";
 import { StatusBadge } from "../components/status_badge.slint";
@@ -35,6 +36,7 @@ export component DiagnosticsView inherits Rectangle {
     in property <[DiagnosticFindingItem]> diagnostic_findings: [];
 
     callback diff_entry_selected(int);
+    callback compare_latest_requested();
 
     background: Theme.bg-canvas;
 
@@ -61,10 +63,16 @@ export component DiagnosticsView inherits Rectangle {
                         StatusBadge {
                             text: root.diag_verdict;
                             kind:
-                                root.diag_verdict == "BIT_FOR_BIT" || root.diag_verdict == "REPRODUCIBLE" ? "success" :
-                                root.diag_verdict == "NORMALIZED" || root.diag_verdict == "EQUIVALENT" ? "info" :
+                                root.diag_verdict == "BIT_FOR_BIT" || root.diag_verdict == "BIT_FOR_BIT_REPRODUCIBLE" || root.diag_verdict == "REPRODUCIBLE" ? "success" :
+                                root.diag_verdict == "NORMALIZED" || root.diag_verdict == "NORMALIZED_REPRODUCIBLE" || root.diag_verdict == "EQUIVALENT" ? "info" :
                                 root.diag_verdict == "DRIFT" || root.diag_verdict == "DIVERGENT" || root.diag_verdict == "NON_REPRODUCIBLE" ? "warning" :
                                 "neutral";
+                        }
+                        ActionButton {
+                            label: "Compare Latest 2";
+                            variant: "secondary";
+                            btn-height: 26px;
+                            clicked => { root.compare_latest_requested(); }
                         }
                     }
                 }

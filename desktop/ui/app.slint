@@ -133,6 +133,8 @@ export component MainWindow inherits Window {
     callback repo_selected(int);
     callback revision_selected(int);
     callback trigger_build_requested();
+    callback verify_pair_requested();
+    callback compare_latest_requested();
     callback build_specific_revision_requested(string);
     callback cancel_build_requested();
     callback backend_type_selected(string);
@@ -305,6 +307,7 @@ export component MainWindow inherits Window {
                             root.build_specific_revision_requested(ref_sha);
                             root.active_tab = 2;
                         }
+                        verify_pair_requested => { root.verify_pair_requested(); }
                     }
 
                     if root.active_tab == 2: BuildsView {
@@ -320,6 +323,8 @@ export component MainWindow inherits Window {
                         active_build_count: root.active_build_count;
                         build_row_clicked(idx) => { root.build_row_clicked(idx); }
                         trigger_build_requested => { root.trigger_build_requested(); }
+                        verify_pair_requested => { root.verify_pair_requested(); }
+                        compare_latest_requested => { root.compare_latest_requested(); }
                         cancel_build_requested => { root.cancel_build_requested(); }
                         backend_type_selected(b) => { root.backend_type_selected(b); }
                     }
@@ -338,6 +343,7 @@ export component MainWindow inherits Window {
                         selected_diff_snippet: root.selected_diff_snippet;
                         diagnostic_findings: root.diagnostic_findings;
                         diff_entry_selected(idx) => { root.diff_entry_selected(idx); }
+                        compare_latest_requested => { root.compare_latest_requested(); }
                     }
 
                     if root.active_tab == 4: CausalityGraphView {

@@ -59,6 +59,7 @@ export component ReposView inherits Rectangle {
     callback confirm_workspace_checklist();
     callback dismiss_workspace_checklist();
     callback build_revision_requested(string);
+    callback verify_pair_requested();
 
     background: Theme.bg-canvas;
 
@@ -293,12 +294,22 @@ export component ReposView inherits Rectangle {
                             }
                         }
 
-                        ActionButton {
-                            label: "Re-Scan GitHub";
-                            variant: "secondary";
-                            btn-height: 28px;
-                            clicked => { root.autoscan_repo_requested(); }
-                            IconRefresh { icon-size: 12px; icon-color: Theme.text-secondary; }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            ActionButton {
+                                label: "Verify Reproducibility (2x Build + Compare)";
+                                variant: "primary";
+                                btn-height: 28px;
+                                clicked => { root.verify_pair_requested(); }
+                                IconPlay { icon-size: 11px; icon-color: #FFFFFF; }
+                            }
+                            ActionButton {
+                                label: "Re-Scan GitHub";
+                                variant: "secondary";
+                                btn-height: 28px;
+                                clicked => { root.autoscan_repo_requested(); }
+                                IconRefresh { icon-size: 12px; icon-color: Theme.text-secondary; }
+                            }
                         }
                     }
 

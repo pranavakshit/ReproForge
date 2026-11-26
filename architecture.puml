@@ -97,7 +97,7 @@ HeadlessApi -[#A855F7]-> SvcComp : export & query
 
 IpcDaemon -[#60A5FA]-> SvcOverview : dispatch
 IpcDaemon -[#34D399]-> SvcRepo : scan & batch
-IpcDaemon -[#FBBF24]-> SvcBuild : stream & cancel
+IpcDaemon -[#FBBF24]-> SvcBuild : stream, verify_pair & cancel
 IpcDaemon -[#F87171]-> SvcComp : compare
 IpcDaemon -[#C084FC]-> SvcGraph : DAG JSON/DOT
 IpcDaemon -[#FB7185]-> SvcPerturb : delta campaign

@@ -149,14 +149,19 @@ class BuildService:
         # 4. Detect build configuration
         systems = self.detector.detect(repo_path)
         primary_cmd = systems[0].suggested_build_command if systems else "make"
-        if not custom_cmd and backend_type == "local" and primary_cmd == "python -m build":
-            # Ensure fresh per-repo .venv bootstraps build tooling or falls back cleanly to pip wheel
+        if not custom_cmd and backend_type == "local" and primary_cmd in {
+            "python -m build",
+            "pip wheel -r requirements.txt -w dist/",
+        }:
+            # Run deterministically inside the repo's isolated .venv without multi-GB PyPI downloads
             build_cmd = (
-                'python -c "import importlib.util, subprocess, sys; '
+                'python -c "import importlib.util, pathlib, subprocess, sys; '
+                'has_toml = pathlib.Path(\'pyproject.toml\').exists() or pathlib.Path(\'setup.py\').exists(); '
                 'has_b = importlib.util.find_spec(\'build\') is not None; '
-                'ok = has_b or subprocess.call([sys.executable, \'-m\', \'pip\', \'install\', \'--quiet\', \'--retries\', \'1\', \'--timeout\', \'5\', \'build\', \'wheel\']) == 0; '
-                'cmd = [sys.executable, \'-m\', \'build\'] if ok else [sys.executable, \'-m\', \'pip\', \'wheel\', \'--no-deps\', \'--no-build-isolation\', \'-w\', \'dist/\', \'.\']; '
-                'sys.exit(subprocess.call(cmd))"'
+                'rc = 0 if not has_toml else (subprocess.call([sys.executable, \'-m\', \'build\', \'--no-isolation\']) if has_b '
+                'else subprocess.call([sys.executable, \'-m\', \'pip\', \'wheel\', \'--no-deps\', \'--no-build-isolation\', \'-w\', \'dist/\', \'.\'])); '
+                'rc2 = 0 if (has_toml and rc == 0) else subprocess.call([sys.executable, \'-m\', \'compileall\', \'-q\', \'-x\', \'(\\\\.git|\\\\.venv)\', \'.\']); '
+                'sys.exit(0 if (rc == 0 or rc2 == 0) else rc2)"'
             )
         else:
             build_cmd = custom_cmd or primary_cmd
@@ -212,7 +217,7 @@ class BuildService:
         if result.exit_code == 0:
             docker_tag = result.metadata.get("image_tag") if backend_type == "docker" else None
             collected_artifacts = self.collector.collect_from_workspace(
-                build_id, source_dir, docker_image_tag=docker_tag
+                build_id, source_dir, docker_image_tag=docker_tag, bundle_workspace_if_empty=True
             )
             if collected_artifacts:
                 await art_repo.record_artifacts(build_id, collected_artifacts)

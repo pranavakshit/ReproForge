@@ -394,9 +394,31 @@ fn sync_builds(ui_handle: slint::Weak<MainWindow>, client: &IpcClient, state: Ar
     }
 }
 
-fn sync_diagnostics(ui_handle: slint::Weak<MainWindow>, client: &IpcClient, state: Arc<Mutex<AppState>>) {
-    if let Ok(val) = client.send_request("comparison.get_latest", None, Duration::from_secs(5)) {
+fn sync_diagnostics(ui_handle: slint::Weak<MainWindow>, client: &IpcClient, state: Arc<Mutex<AppState>>, repo_id: Option<&str>) {
+    let params = match repo_id {
+        Some(rid) => Some(serde_json::json!({ "repository_id": rid })),
+        None => None,
+    };
+    if let Ok(val) = client.send_request("comparison.get_latest", params, Duration::from_secs(5)) {
         if val["id"].is_null() {
+            let msg_a = val["build_a_id"].as_str().unwrap_or("No comparisons yet for this repository").to_string();
+            let msg_b = val["build_b_id"].as_str().unwrap_or("Click 'Verify Reproducibility (2x Build + Compare)'").to_string();
+            if let Ok(mut s) = state.lock() {
+                s.diffs.clear();
+            }
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(ui) = ui_handle.upgrade() {
+                    ui.set_diag_target_a(msg_a.into());
+                    ui.set_diag_target_b(msg_b.into());
+                    ui.set_diag_verdict("UNCOMPARED".into());
+                    ui.set_cri_content(0.0);
+                    ui.set_cri_metadata(0.0);
+                    ui.set_cri_environment(0.0);
+                    ui.set_diff_entries(ModelRc::new(VecModel::from(Vec::<DiffEntry>::new())));
+                    ui.set_selected_diff_snippet("".into());
+                    ui.set_diagnostic_findings(ModelRc::new(VecModel::from(Vec::<DiagnosticFindingItem>::new())));
+                }
+            });
             return;
         }
         let target_a = val["build_a_id"].as_str().unwrap_or("—").to_string();
@@ -484,8 +506,12 @@ fn infer_node_tier(node_type: &str) -> i32 {
     }
 }
 
-fn sync_causality_graph(ui_handle: slint::Weak<MainWindow>, client: &IpcClient, state: Arc<Mutex<AppState>>) {
-    if let Ok(val) = client.send_request("causality.get_graph", None, Duration::from_secs(5)) {
+fn sync_causality_graph(ui_handle: slint::Weak<MainWindow>, client: &IpcClient, state: Arc<Mutex<AppState>>, repo_id: Option<&str>) {
+    let params = match repo_id {
+        Some(rid) => Some(serde_json::json!({ "repository_id": rid })),
+        None => None,
+    };
+    if let Ok(val) = client.send_request("causality.get_graph", params, Duration::from_secs(5)) {
         let nodes: Vec<GraphNodeItem> = val["nodes"]
             .as_array()
             .map(|arr| {
@@ -655,9 +681,9 @@ fn sync_all_views(ui_handle: slint::Weak<MainWindow>, client: &IpcClient, state:
     let sel_repo = state.lock().map(|s| s.selected_repo_idx).unwrap_or(0);
     sync_repositories(ui_handle.clone(), client, state.clone(), sel_repo);
     sync_builds(ui_handle.clone(), client, state.clone());
-    sync_diagnostics(ui_handle.clone(), client, state.clone());
-    sync_causality_graph(ui_handle.clone(), client, state.clone());
     let repo_id = state.lock().ok().and_then(|s| s.repos.get(s.selected_repo_idx).map(|r| r.id.clone()));
+    sync_diagnostics(ui_handle.clone(), client, state.clone(), repo_id.as_deref());
+    sync_causality_graph(ui_handle.clone(), client, state.clone(), repo_id.as_deref());
     sync_perturbation(ui_handle.clone(), client, repo_id.as_deref());
     sync_passport(ui_handle.clone(), client, repo_id.as_deref());
     sync_remediation(ui_handle, client, repo_id.as_deref());
@@ -1039,7 +1065,12 @@ fn main() -> Result<(), slint::PlatformError> {
             let st = st_repo.clone();
             std::thread::spawn(move || {
                 if let Some(client) = sup.get_client() {
-                    sync_revisions_for_repo(ui_h, &client, &st, &rid);
+                    sync_revisions_for_repo(ui_h.clone(), &client, &st, &rid);
+                    sync_diagnostics(ui_h.clone(), &client, st.clone(), Some(&rid));
+                    sync_causality_graph(ui_h.clone(), &client, st, Some(&rid));
+                    sync_perturbation(ui_h.clone(), &client, Some(&rid));
+                    sync_passport(ui_h.clone(), &client, Some(&rid));
+                    sync_remediation(ui_h, &client, Some(&rid));
                 }
             });
         }
@@ -1360,17 +1391,132 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     });
 
+    // Wire Callbacks: One-Click Verify Reproducibility Pair (Build A + Build B + Compare) & Compare Latest 2 Builds
+    let ui_vpair = main_window.as_weak();
+    let sup_vpair = supervisor.clone();
+    let st_vpair = state.clone();
+    main_window.on_verify_pair_requested(move || {
+        let (repo_id, repo_name, commit_ref, backend) = {
+            let s = st_vpair.lock().unwrap();
+            let r = s.repos.get(s.selected_repo_idx);
+            let rid = r.map(|x| x.id.clone());
+            let rname = r.map(|x| x.name.clone()).unwrap_or_else(|| "repository".to_string());
+            let cref = if s.selected_revision_sha.is_empty() { "HEAD".into() } else { s.selected_revision_sha.clone() };
+            (rid, rname, cref, s.selected_backend_type.clone())
+        };
+
+        if let Some(ui) = ui_vpair.upgrade() {
+            ui.set_active_tab(2);
+            ui.set_active_build_count(1);
+            ui.set_selected_build_log(
+                format!("[1/3] Running Build A & Build B for '{}' ({}) in separate isolated .venvs...\n", repo_name, commit_ref).into(),
+            );
+            ui.set_status_banner(format!("Verifying reproducibility for '{}' (2 isolated builds + compare)...", repo_name).into());
+        }
+        if let Ok(mut s) = st_vpair.lock() {
+            s.log_buffer.clear();
+        }
+
+        let sup = sup_vpair.clone();
+        let ui_h = ui_vpair.clone();
+        let st = st_vpair.clone();
+        std::thread::spawn(move || {
+            if let Some(client) = sup.get_client() {
+                let mut params = serde_json::json!({
+                    "backend_type": backend,
+                    "commit_ref": commit_ref,
+                });
+                if let Some(rid) = repo_id {
+                    params["repository_id"] = serde_json::Value::String(rid);
+                }
+                match client.send_request("build.verify_pair", Some(params), Duration::from_secs(240)) {
+                    Ok(res) => {
+                        let verdict = res["verdict"].as_str().unwrap_or("UNCOMPARED").to_string();
+                        let cri = res["cri"].as_f64().unwrap_or(0.0);
+                        sync_all_views(ui_h.clone(), &client, &st);
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_h.upgrade() {
+                                ui.set_active_build_count(0);
+                                ui.set_active_tab(3);
+                                ui.set_status_banner(
+                                    format!(
+                                        "Verification complete for '{}': {} (CRI {:.2}) — Diff, Causality Graph, Passport & Remediation updated!",
+                                        repo_name, verdict, cri
+                                    )
+                                    .into(),
+                                );
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_h.upgrade() {
+                                ui.set_active_build_count(0);
+                                ui.set_status_banner(format!("Verification failed: {}", e).into());
+                            }
+                        });
+                    }
+                }
+            }
+        });
+    });
+
+    let ui_cmp_latest = main_window.as_weak();
+    let sup_cmp_latest = supervisor.clone();
+    let st_cmp_latest = state.clone();
+    main_window.on_compare_latest_requested(move || {
+        let repo_id = st_cmp_latest
+            .lock()
+            .ok()
+            .and_then(|s| s.repos.get(s.selected_repo_idx).map(|r| r.id.clone()));
+        let ui_h = ui_cmp_latest.clone();
+        let sup = sup_cmp_latest.clone();
+        let st = st_cmp_latest.clone();
+        std::thread::spawn(move || {
+            if let Some(client) = sup.get_client() {
+                let params = match &repo_id {
+                    Some(rid) => Some(serde_json::json!({ "repository_id": rid })),
+                    None => None,
+                };
+                match client.send_request("comparison.compare_latest", params, Duration::from_secs(30)) {
+                    Ok(res) => {
+                        let verdict = res["verdict"].as_str().unwrap_or("UNCOMPARED").to_string();
+                        let cri = res["cri"].as_f64().unwrap_or(0.0);
+                        sync_all_views(ui_h.clone(), &client, &st);
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_h.upgrade() {
+                                ui.set_active_tab(3);
+                                ui.set_status_banner(format!("Compared latest 2 builds: {} (CRI {:.2})", verdict, cri).into());
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_h.upgrade() {
+                                ui.set_status_banner(format!("Compare failed: {}", e).into());
+                            }
+                        });
+                    }
+                }
+            }
+        });
+    });
+
     // Wire Callbacks: Causality Graph Refresh & Export DOT
     let ui_graph = main_window.as_weak();
     let sup_graph = supervisor.clone();
     let st_graph = state.clone();
     main_window.on_refresh_graph_requested(move || {
+        let repo_id = st_graph
+            .lock()
+            .ok()
+            .and_then(|s| s.repos.get(s.selected_repo_idx).map(|r| r.id.clone()));
         let ui_h = ui_graph.clone();
         let sup = sup_graph.clone();
         let st = st_graph.clone();
         std::thread::spawn(move || {
             if let Some(client) = sup.get_client() {
-                sync_causality_graph(ui_h, &client, st);
+                sync_causality_graph(ui_h, &client, st, repo_id.as_deref());
             }
         });
     });
@@ -1428,8 +1574,8 @@ fn main() -> Result<(), slint::PlatformError> {
                     Ok(res) => {
                         let cid = res["campaign_id"].as_str().unwrap_or("campaign").to_string();
                         sync_perturbation(ui_h.clone(), &client, repo_id.as_deref());
-                        sync_diagnostics(ui_h.clone(), &client, st.clone());
-                        sync_causality_graph(ui_h.clone(), &client, st);
+                        sync_diagnostics(ui_h.clone(), &client, st.clone(), repo_id.as_deref());
+                        sync_causality_graph(ui_h.clone(), &client, st, repo_id.as_deref());
                         let _ = slint::invoke_from_event_loop(move || {
                             if let Some(ui) = ui_h.upgrade() {
                                 ui.set_perturbation_running(false);

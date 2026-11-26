@@ -50,7 +50,7 @@ ReproForge/
 ├── alembic/                 # SQLite schema migrations
 ├── experiments/benchmarks/  # Section 10 10-scenario evaluation & outputs
 ├── scripts/                 # Portable launch scripts (Windows PowerShell & POSIX Bash)
-├── tests/                   # 104 pytest tests + 3 Rust supervisor integration tests
+├── tests/                   # 105 pytest tests + 3 Rust supervisor integration tests
 ├── start.ps1                # Root Windows PowerShell start script (Desktop GUI or -Api)
 ├── start.bat                # Root Windows CMD / double-click start script
 ├── start.sh                 # Root POSIX / Linux / macOS start script
@@ -95,7 +95,13 @@ pip install -r requirements.txt
   cargo build --release --manifest-path desktop/Cargo.toml
   ```
 
-### 3. CLI & Optional Headless API
+### 3. Live End-to-End Verification Flow (After Adding a Repo)
+1. Launch `.\start.ps1` and open **Repositories** (`Ctrl+2`).
+2. Click **Browse Folder**, pick a local repo or workspace folder, select repository checkboxes, and click **Track & Autoscan Selected**.
+3. Click **Verify Reproducibility (2x Build + Compare)** on the repository card (or in **Builds & Logs**, `Ctrl+3`): ReproForge runs Build A and Build B in separate isolated `.venv`s, collects built packages/archives, compares them, and automatically opens **Diff & Diagnostics** (`Ctrl+4`).
+4. Explore **Causality Graph** (`Ctrl+5`), run **Perturbation Lab** (`Ctrl+6`) to validate hypotheses experimentally, export JSON/Markdown under **Passport & Audit** (`Ctrl+7`), and test disposable-workspace fixes under **Remediation** (`Ctrl+8`).
+
+### 4. CLI & Optional Headless API
 ```powershell
 # CLI repository onboarding & static GitHub autoscan
 .\.venv\Scripts\python.exe -m backend.app.cli.main repo add .
@@ -110,7 +116,7 @@ pip install -r requirements.txt
 ## Verification & Empirical Benchmarks
 
 ### Automated Test Suites
-- **Python Suite:** `.\.venv\Scripts\pytest.exe -q` — `104 passed`
+- **Python Suite:** `.\.venv\Scripts\pytest.exe -q` — `105 passed`
 - **Desktop & IPC Supervisor Suite:** `cargo test --manifest-path desktop/Cargo.toml` — `3 passed` (Python discovery, live JSON-RPC handshake/ping, crash auto-restart)
 
 ### Section 10 Controlled Benchmark Suite (`experiments/benchmarks/repro_benchmark.py`)
