@@ -175,12 +175,22 @@ fn push_candidates_to_ui(ui: &MainWindow, state: &AppState) {
     );
 }
 
+fn parse_rate_pct(val: &serde_json::Value) -> f64 {
+    if let Some(n) = val.as_f64() {
+        return n;
+    }
+    if let Some(s) = val.as_str() {
+        return s.trim().trim_end_matches('%').trim().parse::<f64>().unwrap_or(0.0);
+    }
+    0.0
+}
+
 fn sync_overview(ui_handle: slint::Weak<MainWindow>, client: &IpcClient) {
     if let Ok(val) = client.send_request("overview.get_metrics", None, Duration::from_secs(5)) {
         let total_builds = val["total_builds"].as_u64().unwrap_or(0);
         let total_comps = val["total_comparisons"].as_u64().unwrap_or(0);
-        let bfb = val["bit_for_bit_rate"].as_f64().unwrap_or(0.0);
-        let norm = val["normalized_rate"].as_f64().unwrap_or(0.0);
+        let bfb = parse_rate_pct(&val["bit_for_bit_rate"]);
+        let norm = parse_rate_pct(&val["normalized_rate"]);
         let unresolved = val["unresolved_count"].as_u64().unwrap_or(0);
 
         let tel = &val["telemetry"];
@@ -215,12 +225,12 @@ fn sync_overview(ui_handle: slint::Weak<MainWindow>, client: &IpcClient) {
             .map(|arr| {
                 arr.iter()
                     .map(|b| RecentBuildItem {
-                        build_id: b["build_id"].as_str().unwrap_or("—").into(),
-                        repo: b["repo"].as_str().unwrap_or("unknown").into(),
-                        revision: b["revision"].as_str().unwrap_or("HEAD").into(),
+                        build_id: b["build_id"].as_str().or_else(|| b["id"].as_str()).unwrap_or("—").into(),
+                        repo: b["repo"].as_str().or_else(|| b["repo_name"].as_str()).unwrap_or("unknown").into(),
+                        revision: b["revision"].as_str().or_else(|| b["commit_sha"].as_str()).unwrap_or("HEAD").into(),
                         backend: b["backend"].as_str().unwrap_or("local").into(),
                         status: b["status"].as_str().unwrap_or("unknown").into(),
-                        verdict: b["verdict"].as_str().unwrap_or("UNCOMPARED").into(),
+                        verdict: b["verdict"].as_str().unwrap_or("UNCOMPARED").to_uppercase().into(),
                     })
                     .collect()
             })
@@ -262,12 +272,28 @@ fn sync_revisions_for_repo(ui_handle: slint::Weak<MainWindow>, client: &IpcClien
             .map(|arr| {
                 arr.iter()
                     .map(|rev| {
-                        let sha = rev["sha"].as_str().unwrap_or("HEAD");
+                        let sha = rev["sha"]
+                            .as_str()
+                            .or_else(|| rev["commit_sha"].as_str())
+                            .unwrap_or("HEAD");
+                        let msg = rev["message"]
+                            .as_str()
+                            .or_else(|| rev["commit_message"].as_str())
+                            .unwrap_or("");
+                        let author = rev["author"]
+                            .as_str()
+                            .or_else(|| rev["author_name"].as_str())
+                            .unwrap_or("Unknown");
+                        let date = rev["date"]
+                            .as_str()
+                            .or_else(|| rev["committed_at"].as_str())
+                            .or_else(|| rev["created_at"].as_str())
+                            .unwrap_or("");
                         RevisionRecord {
                             sha: sha.chars().take(10).collect(),
-                            message: rev["message"].as_str().unwrap_or("").into(),
-                            author: rev["author"].as_str().unwrap_or("").into(),
-                            date: rev["date"].as_str().unwrap_or("").chars().take(10).collect(),
+                            message: msg.into(),
+                            author: author.into(),
+                            date: date.chars().take(10).collect(),
                         }
                     })
                     .collect()
@@ -361,12 +387,24 @@ fn sync_builds(ui_handle: slint::Weak<MainWindow>, client: &IpcClient, state: Ar
                     running += 1;
                 }
                 records.push(BuildRecord {
-                    build_id: b["build_id"].as_str().unwrap_or("—").to_string(),
-                    repo: b["repo_name"].as_str().unwrap_or("unknown").to_string(),
+                    build_id: b["build_id"]
+                        .as_str()
+                        .or_else(|| b["id"].as_str())
+                        .unwrap_or("—")
+                        .to_string(),
+                    repo: b["repo_name"]
+                        .as_str()
+                        .or_else(|| b["repo"].as_str())
+                        .unwrap_or("unknown")
+                        .to_string(),
                     commit: b["commit_sha"].as_str().unwrap_or("HEAD").chars().take(8).collect(),
-                    backend: b["backend"].as_str().unwrap_or("local").to_string(),
+                    backend: b["backend"]
+                        .as_str()
+                        .or_else(|| b["profile_name"].as_str())
+                        .unwrap_or("local")
+                        .to_string(),
                     status,
-                    verdict: b["verdict"].as_str().unwrap_or("UNCOMPARED").to_string(),
+                    verdict: b["verdict"].as_str().unwrap_or("UNCOMPARED").to_uppercase(),
                     hash_short: b["primary_hash"]
                         .as_str()
                         .unwrap_or("—")

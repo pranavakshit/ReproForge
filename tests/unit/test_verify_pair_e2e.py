@@ -69,3 +69,17 @@ async def test_track_repo_verify_pair_and_inspect_all_views_e2e(tmp_path: Path):
     )
     assert passport.result["passport"]["repository"]["id"] == repo_id
     assert len(passport.result["passport"]["builds"]) == 2
+
+    # 6. Verify Overview, Build List & Revision List expose non-unknown populated display fields
+    ov = await dispatcher.dispatch(JsonRpcRequest(id=6, method="overview.get_metrics", params={}))
+    assert ov.result["recent_builds"][0]["repo"] == "demo_app"
+    assert ov.result["recent_builds"][0]["revision"] != "HEAD"
+
+    bl = await dispatcher.dispatch(JsonRpcRequest(id=7, method="build.list", params={"repository_id": repo_id}))
+    assert bl.result["builds"][0]["build_id"]
+    assert bl.result["builds"][0]["repo_name"] == "demo_app"
+    assert bl.result["builds"][0]["primary_hash"].startswith("sha256:")
+
+    rv = await dispatcher.dispatch(JsonRpcRequest(id=8, method="repository.get_revisions", params={"repository_id": repo_id}))
+    assert rv.result["revisions"][0]["sha"] != "HEAD"
+    assert rv.result["revisions"][0]["message"] == "initial app"

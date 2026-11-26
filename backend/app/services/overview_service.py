@@ -8,6 +8,7 @@ from backend.app.database.session import AsyncSessionLocal
 from backend.app.models.entities import (
     BuildComparisonModel,
     BuildExecutionModel,
+    RepositoryModel,
     ReproducibilityScoreModel,
     SourceRevisionModel,
 )
@@ -82,8 +83,19 @@ class OverviewService:
 
         recent_builds: List[Dict[str, Any]] = []
         for b in recent_models:
+            # Resolve repository name
+            repo_name = "unknown"
+            if b.repository_id:
+                rname = (
+                    await session.execute(
+                        select(RepositoryModel.name).where(RepositoryModel.id == b.repository_id)
+                    )
+                ).scalar()
+                if rname:
+                    repo_name = rname
+
             # Get commit sha from revision if loaded
-            rev_sha = "unknown"
+            rev_sha = "HEAD"
             if b.revision_id:
                 rev_stmt = select(SourceRevisionModel.commit_sha).where(
                     SourceRevisionModel.id == b.revision_id
@@ -110,13 +122,16 @@ class OverviewService:
             real_verdict = verd_res.scalar()
 
             duration_str = f"{b.duration_seconds:.1f}s" if b.duration_seconds else "-"
+            verdict_label = (real_verdict or ("UNCOMPARED" if b.status == "completed" else b.status)).upper()
             recent_builds.append(
                 {
-                    "build_id": b.id[:12] if len(b.id) > 12 else b.id,
+                    "build_id": b.id,
+                    "repo": repo_name,
+                    "revision": rev_sha,
                     "commit_sha": rev_sha,
                     "backend": b.profile_name,
                     "status": b.status,
-                    "verdict": real_verdict or ("completed_uncompared" if b.status == "completed" else b.status),
+                    "verdict": verdict_label,
                     "duration": duration_str,
                 }
             )

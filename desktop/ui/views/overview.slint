@@ -237,9 +237,9 @@ export component OverviewView inherits Rectangle {
                             StatusBadge {
                                 text: row.verdict;
                                 kind:
-                                    row.verdict == "BIT_FOR_BIT" || row.verdict == "REPRODUCIBLE" ? "success" :
-                                    row.verdict == "NORMALIZED" || row.verdict == "EQUIVALENT" ? "info" :
-                                    row.verdict == "DRIFT" || row.verdict == "DIVERGENT" || row.verdict == "NON_REPRODUCIBLE" ? "warning" :
+                                    row.verdict == "BIT_FOR_BIT" || row.verdict == "BIT_FOR_BIT_REPRODUCIBLE" || row.verdict == "REPRODUCIBLE" ? "success" :
+                                    row.verdict == "NORMALIZED" || row.verdict == "NORMALIZED_REPRODUCIBLE" || row.verdict == "EQUIVALENT" ? "info" :
+                                    row.verdict == "DRIFT" || row.verdict == "DIVERGENT" || row.verdict == "NON_REPRODUCIBLE" || row.verdict == "PARTIALLY_REPRODUCIBLE" ? "warning" :
                                     "neutral";
                             }
                         }

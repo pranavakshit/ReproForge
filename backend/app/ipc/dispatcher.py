@@ -23,6 +23,7 @@ from backend.app.models.entities import (
     BuildExecutionModel,
     DiagnosticFindingModel,
     DiffFindingModel,
+    RepositoryModel,
     ReproducibilityScoreModel,
     SourceRevisionModel,
 )
@@ -213,28 +214,46 @@ class RequestDispatcher:
         build_dicts = [_model_to_dict(b) for b in builds]
 
         async with AsyncSessionLocal() as session:
+            repo_names: Dict[str, str] = {}
+            for r in (await session.execute(select(RepositoryModel))).scalars().all():
+                repo_names[r.id] = r.name
+
             for b_dict in build_dicts:
+                bid = b_dict.get("id", "")
+                b_dict["build_id"] = bid
+                b_dict["repo_name"] = repo_names.get(b_dict.get("repository_id", ""), "unknown")
+
                 # Resolve commit SHA from revision
                 rev_id = b_dict.get("revision_id")
                 if rev_id:
-                    sha_stmt = select(SourceRevisionModel.commit_sha).where(SourceRevisionModel.id == rev_id)
-                    sha_res = await session.execute(sha_stmt)
-                    sha_val = sha_res.scalar()
+                    sha_val = (
+                        await session.execute(
+                            select(SourceRevisionModel.commit_sha).where(SourceRevisionModel.id == rev_id)
+                        )
+                    ).scalar()
                     if sha_val:
                         b_dict["commit_sha"] = sha_val[:8]
                 if not b_dict.get("commit_sha"):
                     b_dict["commit_sha"] = "HEAD"
 
+                # Resolve primary artifact SHA-256
+                art_sha = (
+                    await session.execute(
+                        select(ArtifactItemModel.strict_sha256).where(
+                            ArtifactItemModel.build_execution_id == bid
+                        )
+                    )
+                ).scalar()
+                b_dict["primary_hash"] = f"sha256:{art_sha[:12]}" if art_sha else "—"
+
                 # Resolve verdict from comparison scores if available
-                bid = b_dict.get("id")
                 comp_stmt = select(ReproducibilityScoreModel.verdict).join(
                     BuildComparisonModel, BuildComparisonModel.id == ReproducibilityScoreModel.comparison_id
                 ).where(
                     (BuildComparisonModel.build_id_1 == bid) | (BuildComparisonModel.build_id_2 == bid)
                 )
-                comp_res = await session.execute(comp_stmt)
-                verd = comp_res.scalar()
-                b_dict["verdict"] = verd or ("bit_for_bit_reproducible" if b_dict.get("status") == "completed" else b_dict.get("status", "pending"))
+                verd = (await session.execute(comp_stmt)).scalar()
+                b_dict["verdict"] = (verd or ("UNCOMPARED" if b_dict.get("status") == "completed" else b_dict.get("status", "pending"))).upper()
                 b_dict["backend"] = b_dict.get("profile_name", "isolated-local")
 
         return {
@@ -376,6 +395,9 @@ class RequestDispatcher:
         rev_dicts = [_model_to_dict(r) for r in revs]
         for rd in rev_dicts:
             rd["author"] = rd.get("author_name") or "Unknown"
+            rd["sha"] = rd.get("commit_sha") or "HEAD"
+            rd["message"] = rd.get("commit_message") or "(no commit message)"
+            rd["date"] = str(rd.get("committed_at") or rd.get("created_at") or "")[:10]
         return {
             "repository_id": repository_id,
             "total_count": len(rev_dicts),

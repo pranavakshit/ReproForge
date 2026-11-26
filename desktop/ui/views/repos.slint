@@ -77,7 +77,9 @@ export component ReposView inherits Rectangle {
 
                 Rectangle {
                     horizontal-stretch: 1;
+                    min-width: 220px;
                     height: 34px;
+                    clip: true;
                     background: Theme.bg-input;
                     border-radius: Theme.radius-sm;
                     border-width: 1px;
@@ -107,6 +109,8 @@ export component ReposView inherits Rectangle {
                     if path-edit.text == "" && !path-edit.has-focus: Text {
                         x: 32px;
                         y: 9px;
+                        width: parent.width - 42px;
+                        overflow: elide;
                         text: "Paste local repo, workspace folder (e.g. D:\\Repositories), or GitHub URL...";
                         color: Theme.text-muted;
                         font-size: 11.5px;
@@ -115,6 +119,7 @@ export component ReposView inherits Rectangle {
 
                 // Online GitHub API Toggle Pill
                 Rectangle {
+                    horizontal-stretch: 0;
                     height: 34px;
                     border-radius: Theme.radius-sm;
                     background: root.fetch_online_github ? Theme.accent-primary-soft : Theme.bg-elevated;
@@ -408,10 +413,12 @@ export component ReposView inherits Rectangle {
 
                                 VerticalLayout {
                                     alignment: center;
+                                    horizontal-stretch: 0;
                                     ActionButton {
                                         label: "Build";
                                         variant: "secondary";
                                         btn-height: 26px;
+                                        width: 72px;
                                         h-pad: 10px;
                                         font-size: 11px;
                                         clicked => { root.build_revision_requested(rev.sha); }
