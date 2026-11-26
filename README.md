@@ -50,7 +50,7 @@ ReproForge/
 ├── alembic/                 # SQLite schema migrations
 ├── experiments/benchmarks/  # Section 10 10-scenario evaluation & outputs
 ├── scripts/                 # Portable launch scripts (Windows PowerShell & POSIX Bash)
-├── tests/                   # 105 pytest tests + 3 Rust supervisor integration tests
+├── tests/                   # 106 pytest tests + 3 Rust supervisor integration tests
 ├── start.ps1                # Root Windows PowerShell start script (Desktop GUI or -Api)
 ├── start.bat                # Root Windows CMD / double-click start script
 ├── start.sh                 # Root POSIX / Linux / macOS start script
@@ -116,7 +116,7 @@ pip install -r requirements.txt
 ## Verification & Empirical Benchmarks
 
 ### Automated Test Suites
-- **Python Suite:** `.\.venv\Scripts\pytest.exe -q` — `105 passed`
+- **Python Suite:** `.\.venv\Scripts\pytest.exe -q` — `106 passed`
 - **Desktop & IPC Supervisor Suite:** `cargo test --manifest-path desktop/Cargo.toml` — `3 passed` (Python discovery, live JSON-RPC handshake/ping, crash auto-restart)
 
 ### Section 10 Controlled Benchmark Suite (`experiments/benchmarks/repro_benchmark.py`)

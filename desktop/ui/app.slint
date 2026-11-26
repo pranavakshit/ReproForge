@@ -87,6 +87,7 @@ export component MainWindow inherits Window {
     in-out property <string> selected_hash: "Select a build to inspect primary SHA-256";
     in-out property <string> selected_artifact_count: "0 artifacts";
     in-out property <string> selected_backend_type: "local";
+    in-out property <string> active_target_label: "—";
     in-out property <int> active_build_count: 0;
 
     // Diff & Diagnostics (Milestone F)
@@ -319,6 +320,7 @@ export component MainWindow inherits Window {
                         selected_hash: root.selected_hash;
                         selected_artifact_count: root.selected_artifact_count;
                         selected_backend_type <=> root.selected_backend_type;
+                        active_target_label: root.active_target_label;
                         docker_available: root.docker_available;
                         active_build_count: root.active_build_count;
                         build_row_clicked(idx) => { root.build_row_clicked(idx); }

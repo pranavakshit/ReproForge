@@ -22,6 +22,7 @@ export component BuildsView inherits Rectangle {
     in property <string> selected_hash: "";
     in property <string> selected_artifact_count: "0 artifacts";
     in-out property <string> selected_backend_type: "local";
+    in property <string> active_target_label: "—";
     in property <bool> docker_available: false;
     in property <int> active_build_count: 0;
 
@@ -113,6 +114,12 @@ export component BuildsView inherits Rectangle {
                                 root.backend_type_selected("local");
                             }
                         }
+                    }
+
+                    // Active Target Repository Pill
+                    StatusBadge {
+                        text: "Target: " + root.active_target_label;
+                        kind: "info";
                     }
                 }
 

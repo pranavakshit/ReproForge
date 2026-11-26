@@ -100,3 +100,28 @@ async def test_local_sandbox_uses_repo_isolated_venv_not_host_venv(tmp_path: Pat
     assert Path(probe_env).resolve() == expected_venv
     assert Path(probe_prefix).resolve() != Path(sys.prefix).resolve()
     assert str(expected_venv).lower() in str(Path(probe_which).resolve()).lower()
+
+
+@pytest.mark.asyncio
+async def test_docker_backend_falls_back_gracefully_without_dockerfile(tmp_path: Path, monkeypatch):
+    """Verify DockerBuildBackend falls back to per-repo .venv sandbox instead of failing on missing Dockerfile."""
+    from backend.app.execution.runner import DockerBuildBackend
+
+    source_dir = tmp_path / "no_dockerfile_repo" / "source"
+    source_dir.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr("shutil.which", lambda name: "docker" if name == "docker" else None)
+    monkeypatch.setattr(DockerBuildBackend, "_find_cached_python_image", staticmethod(lambda: None))
+
+    backend = DockerBuildBackend()
+    result = await backend.execute(
+        build_id="test-docker-fallback",
+        workspace_source_dir=source_dir,
+        build_command='python -c "print(\'fallback ok\')"',
+        timeout_seconds=15,
+    )
+
+    assert result.status == BuildStatus.COMPLETED
+    assert result.exit_code == 0
+    assert result.metadata["isolation_tier"] == "host_sandbox_venv_fallback"
+    assert (source_dir / ".venv").exists()

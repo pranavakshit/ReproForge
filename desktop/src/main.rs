@@ -150,6 +150,21 @@ fn push_builds_to_ui(ui: &MainWindow, state: &AppState) {
     ui.set_builds(ModelRc::new(VecModel::from(rows)));
 }
 
+fn refresh_target_label(ui: &MainWindow, state: &AppState) {
+    let repo_name = state
+        .repos
+        .get(state.selected_repo_idx)
+        .map(|r| r.name.as_str())
+        .unwrap_or("—");
+    let rev = if state.selected_revision_sha.is_empty() {
+        "HEAD"
+    } else {
+        &state.selected_revision_sha
+    };
+    let short_rev: String = rev.chars().take(8).collect();
+    ui.set_active_target_label(format!("{} @ {}", repo_name, short_rev).into());
+}
+
 fn push_repos_to_ui(ui: &MainWindow, state: &AppState) {
     let q = state.search_query.trim().to_lowercase();
     let rows: Vec<RepoItem> = state
@@ -164,6 +179,7 @@ fn push_repos_to_ui(ui: &MainWindow, state: &AppState) {
         .map(to_slint_repo)
         .collect();
     ui.set_repos(ModelRc::new(VecModel::from(rows)));
+    refresh_target_label(ui, state);
 }
 
 fn push_candidates_to_ui(ui: &MainWindow, state: &AppState) {
@@ -300,16 +316,28 @@ fn sync_revisions_for_repo(ui_handle: slint::Weak<MainWindow>, client: &IpcClien
             })
             .unwrap_or_default();
 
-        if let Some(first) = revs.first() {
+        let target_label = {
             if let Ok(mut s) = state.lock() {
-                s.selected_revision_sha = first.sha.clone();
+                if let Some(first) = revs.first() {
+                    s.selected_revision_sha = first.sha.clone();
+                } else {
+                    s.selected_revision_sha = "HEAD".to_string();
+                }
+                let rname = s.repos.get(s.selected_repo_idx).map(|r| r.name.as_str()).unwrap_or("—");
+                let short_rev: String = s.selected_revision_sha.chars().take(8).collect();
+                Some(format!("{} @ {}", rname, short_rev))
+            } else {
+                None
             }
-        }
+        };
         let ui_revs: Vec<RevisionItem> = revs.iter().map(to_slint_revision).collect();
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(ui) = ui_handle.upgrade() {
                 ui.set_revisions(ModelRc::new(VecModel::from(ui_revs)));
                 ui.set_selected_revision_idx(0);
+                if let Some(lbl) = target_label {
+                    ui.set_active_target_label(lbl.into());
+                }
             }
         });
     }
@@ -1037,40 +1065,77 @@ fn main() -> Result<(), slint::PlatformError> {
     let sup_row = supervisor.clone();
     let st_row = state.clone();
     main_window.on_build_row_clicked(move |idx| {
-        let build_id = {
-            let s = st_row.lock().ok();
-            s.and_then(|st| {
-                let q = st.search_query.trim().to_lowercase();
-                st.builds
-                    .iter()
-                    .filter(|b| {
-                        q.is_empty()
-                            || b.build_id.to_lowercase().contains(&q)
-                            || b.repo.to_lowercase().contains(&q)
-                            || b.commit.to_lowercase().contains(&q)
-                    })
-                    .nth(idx as usize)
-                    .map(|b| b.build_id.clone())
-            })
+        let clicked = {
+            let Ok(mut st) = st_row.lock() else { return; };
+            let q = st.search_query.trim().to_lowercase();
+            let chosen = st
+                .builds
+                .iter()
+                .filter(|b| {
+                    q.is_empty()
+                        || b.build_id.to_lowercase().contains(&q)
+                        || b.repo.to_lowercase().contains(&q)
+                        || b.commit.to_lowercase().contains(&q)
+                })
+                .nth(idx as usize)
+                .cloned();
+            if let Some(ref b) = chosen {
+                if let Some(r_idx) = st.repos.iter().position(|r| r.name == b.repo) {
+                    st.selected_repo_idx = r_idx;
+                    if !b.commit.is_empty() {
+                        st.selected_revision_sha = b.commit.clone();
+                    }
+                    let matched_id = st.repos[r_idx].id.clone();
+                    if let Some(ui) = ui_row.upgrade() {
+                        ui.set_selected_repo_idx(r_idx as i32);
+                        refresh_target_label(&ui, &st);
+                    }
+                    Some((b.build_id.clone(), Some(matched_id)))
+                } else {
+                    Some((b.build_id.clone(), None))
+                }
+            } else {
+                None
+            }
         };
 
-        if let Some(bid) = build_id {
+        if let Some((bid, matched_repo_id)) = clicked {
             let ui_h = ui_row.clone();
             let sup = sup_row.clone();
+            let st_sync = st_row.clone();
             std::thread::spawn(move || {
                 if let Some(client) = sup.get_client() {
                     let params = serde_json::json!({ "build_id": bid });
                     if let Ok(det) = client.send_request("build.get_details", Some(params), Duration::from_secs(5)) {
-                        let sha = det["primary_sha256"].as_str().unwrap_or("No SHA-256 artifact digest captured").to_string();
+                        let raw_sha = det["primary_sha256"].as_str().unwrap_or("");
+                        let sha = if raw_sha.is_empty() {
+                            "No artifact digest captured for this build".to_string()
+                        } else {
+                            raw_sha.to_string()
+                        };
                         let count = det["artifacts"].as_array().map(|a| a.len()).unwrap_or(0);
-                        let log_txt = det["log_text"].as_str().unwrap_or("").to_string();
+                        let raw_log = det["log_text"].as_str().unwrap_or("");
+                        let log_txt = if raw_log.is_empty() {
+                            format!("No persisted build log recorded on disk for build '{}'.", bid)
+                        } else {
+                            raw_log.to_string()
+                        };
+                        let ui_det = ui_h.clone();
                         let _ = slint::invoke_from_event_loop(move || {
-                            if let Some(ui) = ui_h.upgrade() {
+                            if let Some(ui) = ui_det.upgrade() {
                                 ui.set_selected_hash(sha.into());
                                 ui.set_selected_artifact_count(format!("{} artifact(s)", count).into());
                                 ui.set_selected_build_log(log_txt.into());
                             }
                         });
+                    }
+                    if let Some(rid) = matched_repo_id {
+                        sync_revisions_for_repo(ui_h.clone(), &client, &st_sync, &rid);
+                        sync_diagnostics(ui_h.clone(), &client, st_sync.clone(), Some(&rid));
+                        sync_causality_graph(ui_h.clone(), &client, st_sync, Some(&rid));
+                        sync_perturbation(ui_h.clone(), &client, Some(&rid));
+                        sync_passport(ui_h.clone(), &client, Some(&rid));
+                        sync_remediation(ui_h, &client, Some(&rid));
                     }
                 }
             });
@@ -1122,6 +1187,7 @@ fn main() -> Result<(), slint::PlatformError> {
             if let Some(rev) = revs.row_data(idx as usize) {
                 if let Ok(mut s) = st_rev.lock() {
                     s.selected_revision_sha = rev.sha.to_string();
+                    refresh_target_label(&ui, &s);
                 }
             }
         }
@@ -1487,6 +1553,8 @@ fn main() -> Result<(), slint::PlatformError> {
                         });
                     }
                     Err(e) => {
+                        sync_builds(ui_h.clone(), &client, st);
+                        sync_overview(ui_h.clone(), &client);
                         let _ = slint::invoke_from_event_loop(move || {
                             if let Some(ui) = ui_h.upgrade() {
                                 ui.set_active_build_count(0);

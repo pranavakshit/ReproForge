@@ -321,6 +321,26 @@ class LocalSandboxBackend(BaseBuildBackend):
 class DockerBuildBackend(BaseBuildBackend):
     """Executes container builds using Docker Engine / BuildKit with strict caching & resource caps."""
 
+    @staticmethod
+    def _find_cached_python_image() -> Optional[str]:
+        """Return a locally cached Python container image if available offline (no registry pull)."""
+        try:
+            proc = subprocess.run(
+                ["docker", "images", "--format", "{{.Repository}}:{{.Tag}}"],
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if proc.returncode == 0:
+                for line in proc.stdout.splitlines():
+                    tag = line.strip()
+                    if tag and "<none>" not in tag and tag.startswith(("python:", "library/python:")):
+                        return tag
+        except Exception:
+            pass
+        return None
+
     async def execute(
         self,
         build_id: str,
@@ -337,23 +357,65 @@ class DockerBuildBackend(BaseBuildBackend):
         if not docker_bin:
             raise RuntimeError("Docker executable not found on system PATH.")
 
+        has_dockerfile = (workspace_source_dir / "Dockerfile").is_file() or (
+            workspace_source_dir / "Containerfile"
+        ).is_file()
         image_tag = f"reproforge-{build_id}:target"
         net_flag = "" if network_access else " --network=none"
-        # Force --no-cache and explicit memory/CPU limits (Master Prompt §14)
-        full_command = f"docker build --no-cache --memory={memory_limit}{net_flag} -t {image_tag} ."
-
         sandbox = LocalSandboxBackend()
-        result = await sandbox.execute(
-            build_id=build_id,
-            workspace_source_dir=workspace_source_dir,
-            build_command=full_command,
-            env_vars=env_vars,
-            timeout_seconds=timeout_seconds,
-            on_output_chunk=on_output_chunk,
-        )
-        result.backend_type = "docker"
-        result.metadata["image_tag"] = image_tag
-        result.metadata["isolation_tier"] = "container_isolated"
+
+        if has_dockerfile:
+            # Force --no-cache and explicit memory/CPU limits (Master Prompt §14)
+            full_command = f"docker build --no-cache --memory={memory_limit}{net_flag} -t {image_tag} ."
+            result = await sandbox.execute(
+                build_id=build_id,
+                workspace_source_dir=workspace_source_dir,
+                build_command=full_command,
+                env_vars=env_vars,
+                timeout_seconds=timeout_seconds,
+                on_output_chunk=on_output_chunk,
+            )
+            result.backend_type = "docker"
+            result.metadata["image_tag"] = image_tag
+            result.metadata["isolation_tier"] = "container_isolated"
+        else:
+            cached_img = await asyncio.to_thread(self._find_cached_python_image)
+            if cached_img:
+                inner = build_command or "python -m compileall -q ."
+                if on_output_chunk:
+                    on_output_chunk(f"[Docker Ephemeral Container] No Dockerfile found; running inside {cached_img}\n")
+                full_command = (
+                    f'docker run --rm --memory={memory_limit} --cpus={cpu_limit}{net_flag} '
+                    f'-v "{workspace_source_dir}:/workspace" -w /workspace {cached_img} sh -c {subprocess.list2cmdline([inner])}'
+                )
+                result = await sandbox.execute(
+                    build_id=build_id,
+                    workspace_source_dir=workspace_source_dir,
+                    build_command=full_command,
+                    env_vars=env_vars,
+                    timeout_seconds=timeout_seconds,
+                    on_output_chunk=on_output_chunk,
+                )
+                result.backend_type = "docker"
+                result.metadata["isolation_tier"] = "container_ephemeral"
+                result.metadata["base_image"] = cached_img
+            else:
+                if on_output_chunk:
+                    on_output_chunk(
+                        "[Docker Fallback] Repository has no Dockerfile and no local base container image cached (--network=none).\n"
+                        "[Docker Fallback] Running inside isolated per-repository .venv sandbox instead.\n"
+                    )
+                result = await sandbox.execute(
+                    build_id=build_id,
+                    workspace_source_dir=workspace_source_dir,
+                    build_command=build_command,
+                    env_vars=env_vars,
+                    timeout_seconds=timeout_seconds,
+                    on_output_chunk=on_output_chunk,
+                )
+                result.backend_type = "local_sandbox"
+                result.metadata["isolation_tier"] = "host_sandbox_venv_fallback"
+
         result.metadata["network_disabled"] = not network_access
         result.metadata["memory_limit"] = memory_limit
         result.metadata["cpu_limit"] = cpu_limit
