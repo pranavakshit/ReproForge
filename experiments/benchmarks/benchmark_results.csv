@@ -1,0 +1,11 @@
+experiment_id,name,expected_verdict,reproforge_verdict,expected_category,detected_categories,category_match,latency_ms,sha_baseline_blind_spot,raw_diff_blind_spot
+EXP-01,Deterministic Build,bit_for_bit_reproducible,bit_for_bit_reproducible,,,True,17.77,None,No normalization semantics
+EXP-02,Timestamp Nondeterminism,normalized_reproducible,normalized_reproducible,timestamp_nondeterminism,timestamp_nondeterminism,True,9.81,Marks IDENTICAL bytes as FAILED due to header/mtime drift,Lists path deltas without epistemic causal attribution
+EXP-03,Dependency Variation,non_reproducible,non_reproducible,dependency_variation,dependency_variation,True,10.4,Zero root-cause classification on drift,Lists path deltas without epistemic causal attribution
+EXP-04,Environment Variable Variation,non_reproducible,non_reproducible,environment_leakage,environment_leakage,True,12.44,Zero root-cause classification on drift,Lists path deltas without epistemic causal attribution
+EXP-05,Toolchain Variation,non_reproducible,non_reproducible,toolchain_variation,toolchain_variation,True,10.66,Zero root-cause classification on drift,Lists path deltas without epistemic causal attribution
+EXP-06,Archive Nondeterminism,normalized_reproducible,normalized_reproducible,timestamp_nondeterminism,timestamp_nondeterminism|filesystem_ordering,True,12.7,Marks IDENTICAL bytes as FAILED due to header/mtime drift,Lists path deltas without epistemic causal attribution
+EXP-07,Container Image Reproducibility,non_reproducible,non_reproducible,base_image_variation,base_image_variation,True,14.71,Zero root-cause classification on drift,Lists path deltas without epistemic causal attribution
+EXP-08,Unknown Nondeterminism,inconclusive,inconclusive,unknown_variation,unknown_variation,True,9.44,Zero root-cause classification on drift,Lists path deltas without epistemic causal attribution
+EXP-09,Cross-Environment Build,non_reproducible,non_reproducible,platform_variation,platform_variation,True,8.93,Zero root-cause classification on drift,Lists path deltas without epistemic causal attribution
+EXP-10,Diagnostic Performance (60-file Archive),normalized_reproducible,normalized_reproducible,timestamp_nondeterminism,timestamp_nondeterminism|filesystem_ordering,True,77.8,Marks IDENTICAL bytes as FAILED due to header/mtime drift,Lists path deltas without epistemic causal attribution

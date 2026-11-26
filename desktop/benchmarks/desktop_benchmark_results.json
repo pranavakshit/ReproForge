@@ -1,56 +1,56 @@
 {
-  "binary_size_mb": 11.15,
+  "binary_size_mb": 13.17,
   "benchmarks": {
     "hardware_200": {
       "name": "Slint Permanent (Hardware)",
       "records": 200,
       "first_frame_ms": {
-        "avg_ms": 298.7,
-        "min_ms": 281.6,
-        "max_ms": 329.2
+        "avg_ms": 673.6,
+        "min_ms": 601.6,
+        "max_ms": 748.7
       },
       "idle_telemetry": {
-        "avg_ram_mb": 118.4,
-        "avg_cpu_percent": 0.0
+        "avg_ram_mb": 117.43,
+        "avg_cpu_percent": 2.6
       }
     },
     "software_200": {
       "name": "Slint Permanent (Software)",
       "records": 200,
       "first_frame_ms": {
-        "avg_ms": 65.2,
-        "min_ms": 58.8,
-        "max_ms": 70.7
+        "avg_ms": 121.4,
+        "min_ms": 114.7,
+        "max_ms": 125.1
       },
       "idle_telemetry": {
-        "avg_ram_mb": 38.7,
-        "avg_cpu_percent": 0.0
+        "avg_ram_mb": 41.32,
+        "avg_cpu_percent": 0.52
       }
     },
     "hardware_10000": {
       "name": "Slint Permanent (Hardware)",
       "records": 10000,
       "first_frame_ms": {
-        "avg_ms": 310.8,
-        "min_ms": 292.4,
-        "max_ms": 334.0
+        "avg_ms": 700.0,
+        "min_ms": 694.6,
+        "max_ms": 705.6
       },
       "idle_telemetry": {
-        "avg_ram_mb": 127.08,
-        "avg_cpu_percent": 0.0
+        "avg_ram_mb": 122.28,
+        "avg_cpu_percent": 1.03
       }
     },
     "hardware_50000": {
       "name": "Slint Permanent (Hardware)",
       "records": 50000,
       "first_frame_ms": {
-        "avg_ms": 302.3,
-        "min_ms": 292.1,
-        "max_ms": 313.6
+        "avg_ms": 842.6,
+        "min_ms": 777.8,
+        "max_ms": 896.2
       },
       "idle_telemetry": {
-        "avg_ram_mb": 160.72,
-        "avg_cpu_percent": 0.0
+        "avg_ram_mb": 148.04,
+        "avg_cpu_percent": 3.12
       }
     }
   }

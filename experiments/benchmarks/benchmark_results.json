@@ -1,0 +1,241 @@
+{
+  "generated_at": "2026-11-26T07:02:21.208040+00:00",
+  "total_scenarios": 10,
+  "baselines": {
+    "sha256_hash_only": {
+      "available": true
+    },
+    "raw_file_diff": {
+      "available": true
+    },
+    "diffoscope": {
+      "available": false,
+      "path": null
+    }
+  },
+  "metrics": {
+    "verdict_accuracy_num": 10,
+    "verdict_accuracy_den": 10,
+    "verdict_accuracy_pct": 100.0,
+    "diagnostic_category_accuracy_num": 10,
+    "diagnostic_category_accuracy_den": 10,
+    "diagnostic_category_accuracy_pct": 100.0,
+    "normalized_recovery_num": 3,
+    "normalized_recovery_den": 3,
+    "normalized_recovery_pct": 100.0,
+    "unknown_nondeterminism_safe_fallback": true,
+    "avg_diagnostic_latency_ms": 18.47
+  },
+  "scenarios": [
+    {
+      "experiment_id": "EXP-01",
+      "name": "Deterministic Build",
+      "latency_ms": 17.77,
+      "raw_sha_match": true,
+      "normalized_match": true,
+      "expected_verdict": "bit_for_bit_reproducible",
+      "reproforge_verdict": "bit_for_bit_reproducible",
+      "verdict_match": true,
+      "cri": 1.0,
+      "expected_category": null,
+      "detected_categories": [],
+      "epistemic_statuses": [],
+      "category_match": true,
+      "sha_baseline_blind_spot": "None",
+      "raw_diff_blind_spot": "No normalization semantics"
+    },
+    {
+      "experiment_id": "EXP-02",
+      "name": "Timestamp Nondeterminism",
+      "latency_ms": 9.81,
+      "raw_sha_match": false,
+      "normalized_match": true,
+      "expected_verdict": "normalized_reproducible",
+      "reproforge_verdict": "normalized_reproducible",
+      "verdict_match": true,
+      "cri": 0.5,
+      "expected_category": "timestamp_nondeterminism",
+      "detected_categories": [
+        "timestamp_nondeterminism"
+      ],
+      "epistemic_statuses": [
+        null
+      ],
+      "category_match": true,
+      "sha_baseline_blind_spot": "Marks IDENTICAL bytes as FAILED due to header/mtime drift",
+      "raw_diff_blind_spot": "Lists path deltas without epistemic causal attribution"
+    },
+    {
+      "experiment_id": "EXP-03",
+      "name": "Dependency Variation",
+      "latency_ms": 10.4,
+      "raw_sha_match": false,
+      "normalized_match": false,
+      "expected_verdict": "non_reproducible",
+      "reproforge_verdict": "non_reproducible",
+      "verdict_match": true,
+      "cri": 0.1,
+      "expected_category": "dependency_variation",
+      "detected_categories": [
+        "dependency_variation"
+      ],
+      "epistemic_statuses": [
+        null
+      ],
+      "category_match": true,
+      "sha_baseline_blind_spot": "Zero root-cause classification on drift",
+      "raw_diff_blind_spot": "Lists path deltas without epistemic causal attribution"
+    },
+    {
+      "experiment_id": "EXP-04",
+      "name": "Environment Variable Variation",
+      "latency_ms": 12.44,
+      "raw_sha_match": false,
+      "normalized_match": false,
+      "expected_verdict": "non_reproducible",
+      "reproforge_verdict": "non_reproducible",
+      "verdict_match": true,
+      "cri": 0.1,
+      "expected_category": "environment_leakage",
+      "detected_categories": [
+        "environment_leakage"
+      ],
+      "epistemic_statuses": [
+        null
+      ],
+      "category_match": true,
+      "sha_baseline_blind_spot": "Zero root-cause classification on drift",
+      "raw_diff_blind_spot": "Lists path deltas without epistemic causal attribution"
+    },
+    {
+      "experiment_id": "EXP-05",
+      "name": "Toolchain Variation",
+      "latency_ms": 10.66,
+      "raw_sha_match": false,
+      "normalized_match": false,
+      "expected_verdict": "non_reproducible",
+      "reproforge_verdict": "non_reproducible",
+      "verdict_match": true,
+      "cri": 0.1,
+      "expected_category": "toolchain_variation",
+      "detected_categories": [
+        "toolchain_variation"
+      ],
+      "epistemic_statuses": [
+        null
+      ],
+      "category_match": true,
+      "sha_baseline_blind_spot": "Zero root-cause classification on drift",
+      "raw_diff_blind_spot": "Lists path deltas without epistemic causal attribution"
+    },
+    {
+      "experiment_id": "EXP-06",
+      "name": "Archive Nondeterminism",
+      "latency_ms": 12.7,
+      "raw_sha_match": false,
+      "normalized_match": true,
+      "expected_verdict": "normalized_reproducible",
+      "reproforge_verdict": "normalized_reproducible",
+      "verdict_match": true,
+      "cri": 0.5,
+      "expected_category": "timestamp_nondeterminism",
+      "detected_categories": [
+        "timestamp_nondeterminism",
+        "filesystem_ordering"
+      ],
+      "epistemic_statuses": [
+        null,
+        null
+      ],
+      "category_match": true,
+      "sha_baseline_blind_spot": "Marks IDENTICAL bytes as FAILED due to header/mtime drift",
+      "raw_diff_blind_spot": "Lists path deltas without epistemic causal attribution"
+    },
+    {
+      "experiment_id": "EXP-07",
+      "name": "Container Image Reproducibility",
+      "latency_ms": 14.71,
+      "raw_sha_match": false,
+      "normalized_match": false,
+      "expected_verdict": "non_reproducible",
+      "reproforge_verdict": "non_reproducible",
+      "verdict_match": true,
+      "cri": 0.1,
+      "expected_category": "base_image_variation",
+      "detected_categories": [
+        "base_image_variation"
+      ],
+      "epistemic_statuses": [
+        null
+      ],
+      "category_match": true,
+      "sha_baseline_blind_spot": "Zero root-cause classification on drift",
+      "raw_diff_blind_spot": "Lists path deltas without epistemic causal attribution"
+    },
+    {
+      "experiment_id": "EXP-08",
+      "name": "Unknown Nondeterminism",
+      "latency_ms": 9.44,
+      "raw_sha_match": false,
+      "normalized_match": false,
+      "expected_verdict": "inconclusive",
+      "reproforge_verdict": "inconclusive",
+      "verdict_match": true,
+      "cri": 0.1,
+      "expected_category": "unknown_variation",
+      "detected_categories": [
+        "unknown_variation"
+      ],
+      "epistemic_statuses": [
+        null
+      ],
+      "category_match": true,
+      "sha_baseline_blind_spot": "Zero root-cause classification on drift",
+      "raw_diff_blind_spot": "Lists path deltas without epistemic causal attribution"
+    },
+    {
+      "experiment_id": "EXP-09",
+      "name": "Cross-Environment Build",
+      "latency_ms": 8.93,
+      "raw_sha_match": false,
+      "normalized_match": false,
+      "expected_verdict": "non_reproducible",
+      "reproforge_verdict": "non_reproducible",
+      "verdict_match": true,
+      "cri": 0.1,
+      "expected_category": "platform_variation",
+      "detected_categories": [
+        "platform_variation"
+      ],
+      "epistemic_statuses": [
+        null
+      ],
+      "category_match": true,
+      "sha_baseline_blind_spot": "Zero root-cause classification on drift",
+      "raw_diff_blind_spot": "Lists path deltas without epistemic causal attribution"
+    },
+    {
+      "experiment_id": "EXP-10",
+      "name": "Diagnostic Performance (60-file Archive)",
+      "latency_ms": 77.8,
+      "raw_sha_match": false,
+      "normalized_match": true,
+      "expected_verdict": "normalized_reproducible",
+      "reproforge_verdict": "normalized_reproducible",
+      "verdict_match": true,
+      "cri": 0.5,
+      "expected_category": "timestamp_nondeterminism",
+      "detected_categories": [
+        "timestamp_nondeterminism",
+        "filesystem_ordering"
+      ],
+      "epistemic_statuses": [
+        null,
+        null
+      ],
+      "category_match": true,
+      "sha_baseline_blind_spot": "Marks IDENTICAL bytes as FAILED due to header/mtime drift",
+      "raw_diff_blind_spot": "Lists path deltas without epistemic causal attribution"
+    }
+  ]
+}
