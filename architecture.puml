@@ -40,7 +40,7 @@ package "Entry Adapters (Python)" {
   [Click CLI\n(reproforge)] as Cli
   [IpcDaemon & RequestDispatcher\n(Concurrent asyncio Tasks)] as IpcDaemon
   [Optional Headless FastAPI\n(backend/app/api/app.py)] as HeadlessApi
-  [Portable Launchers\n(reproforge.bat / .ps1 / .sh)] as Launchers
+  [Root & Portable Launchers\n(start.ps1 / .bat / .sh, reproforge.bat)] as Launchers
 }
 
 package "Shared Application Services (backend/app/services/)" {

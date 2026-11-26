@@ -50,7 +50,10 @@ ReproForge/
 ├── experiments/benchmarks/  # Section 10 10-scenario evaluation & outputs
 ├── scripts/                 # Portable launch scripts (Windows PowerShell & POSIX Bash)
 ├── tests/                   # 103 pytest tests + 3 Rust supervisor integration tests
-├── reproforge.bat           # One-click Windows Desktop Studio launcher
+├── start.ps1                # Root Windows PowerShell start script (Desktop GUI or -Api)
+├── start.bat                # Root Windows CMD / double-click start script
+├── start.sh                 # Root POSIX / Linux / macOS start script
+├── reproforge.bat           # Alternate Windows Desktop Studio launcher
 └── architecture.puml        # Full system architecture diagram
 ```
 
@@ -67,17 +70,24 @@ pip install -r requirements.txt
 ```
 
 ### 2. Launch ReproForge Desktop Studio
-- **Windows (Hardware GPU default):**
+- **Windows PowerShell (Root Start Script):**
   ```powershell
-  .\reproforge.bat
-  # or software fallback renderer (~41 MB idle RAM):
-  powershell -ExecutionPolicy Bypass -File scripts\launch_desktop.ps1 -Renderer software
+  .\start.ps1
+  # low-RAM CPU software renderer (~41 MB idle RAM):
+  .\start.ps1 -Renderer software
+  # start optional headless FastAPI server instead:
+  .\start.ps1 -Api
+  ```
+- **Windows CMD / Explorer:**
+  ```cmd
+  start.bat
   ```
 - **Linux / macOS:**
   ```bash
-  ./scripts/launch_desktop.sh hardware
-  # or software renderer:
-  ./scripts/launch_desktop.sh software
+  ./start.sh
+  # or software renderer / headless API:
+  ./start.sh software
+  ./start.sh --api
   ```
 - **Build release binary explicitly:**
   ```powershell
