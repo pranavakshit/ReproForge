@@ -75,5 +75,5 @@ ehthumbs.db
 target/
 **/target/
 
-# Docs
-docs/
+# Local private documents (prompts, copyright application, proposal slides, academic/viva notes)
+private_docs/*

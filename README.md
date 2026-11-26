@@ -101,15 +101,26 @@ pip install -r requirements.txt
 3. Click **Verify Reproducibility (2x Build + Compare)** on the repository card (or in **Builds & Logs**, `Ctrl+3`): ReproForge runs Build A and Build B in separate isolated `.venv`s, collects built packages/archives, compares them, and automatically opens **Diff & Diagnostics** (`Ctrl+4`).
 4. Explore **Causality Graph** (`Ctrl+5`), run **Perturbation Lab** (`Ctrl+6`) to validate hypotheses experimentally, export JSON/Markdown under **Passport & Audit** (`Ctrl+7`), and test disposable-workspace fixes under **Remediation** (`Ctrl+8`).
 
-### 4. CLI & Optional Headless API
+### 4. CLI, Wiki & Optional Headless API
 ```powershell
-# CLI repository onboarding & static GitHub autoscan
-.\.venv\Scripts\python.exe -m backend.app.cli.main repo add .
-.\.venv\Scripts\python.exe -m backend.app.cli.main repo scan --all
+# CLI repository onboarding, scan & static GitHub autoscan
+.\.venv\Scripts\reproforge.exe repo add .
+.\.venv\Scripts\reproforge.exe repo scan D:\Repositories
+
+# Full CLI reference & automation guide
+# See docs/CLI_WIKI.md
 
 # Optional headless FastAPI server (desktop does not depend on HTTP)
 .\.venv\Scripts\uvicorn.exe backend.app.api.app:app --host 127.0.0.1 --port 8765
 ```
+
+### 5. Project Documentation
+- [CLI & Automation Wiki](docs/CLI_WIKI.md) — Full `reproforge` command reference, flags, launchers, config, and FastAPI endpoints
+- [System Architecture](docs/ARCHITECTURE.md) — Layer separation, IPC protocol, and safety boundaries
+- [Architecture Decision Log](docs/DECISIONS.md) — ADRs for Slint/Rust, stdio JSON-RPC, static GitHub scan, and remediation
+- [Empirical Evaluation & Benchmarks](docs/EXPERIMENTS.md) — 10-scenario suite and desktop memory/latency profiling
+- [Research Foundations](docs/RESEARCH.md) — Research questions and core technical contributions
+- [Development Roadmap](docs/ROADMAP.md) — Completed milestones and future extensions
 
 ---
 
