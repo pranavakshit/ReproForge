@@ -61,7 +61,7 @@ package "Orchestration, Execution & Fingerprinting" {
   [BuildConfigurationDetector\n(Py/Node/Rust/Go/Docker/CI)] as Detector
   [GitHubAutoScanner\n(Static + Read-Only Metadata)] as GhScanner
   [EnvironmentFingerprintEngine] as FpEngine
-  [LocalSandboxBackend\n(Allowlisted Env)] as LocalSandbox
+  [LocalSandboxBackend\n(Allowlisted Env + Per-Repo .venv)] as LocalSandbox
   [DockerBuildBackend\n(--network=none + Resource Caps)] as DockerBackend
   [WorkspaceManager & ArtifactCollector] as Collector
 }

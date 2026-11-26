@@ -10,6 +10,7 @@ See [architecture.puml](architecture.puml) for the full system component diagram
 
 ## Core Capabilities
 
+- **Core Capabilities & Per-Repo Build Isolation:** Local builds automatically provision a dedicated `.venv` inside each build's exported workspace (`build_workspaces/<id>/source/.venv`) rooted at the base Python interpreter and stripped of ReproForge's own `VIRTUAL_ENV`, `PYTHONPATH`, and `PATH` entries, ensuring every target repo builds in its own isolated `.venv`.
 - **Dual-Mode Artifact Comparison:** Strict SHA-256 verification alongside deterministic structural normalization across `.tar`, `.zip`, `.whl`, directory trees, and OCI/Docker container image manifests (`ArchiveUnpacker`, `ArtifactNormalizer`, `OCIImageInspector`).
 - **Epistemic Root-Cause Diagnostics:** Evaluates discrepancies across 11 tightened causal rules (`timestamp_nondeterminism`, `filesystem_ordering`, `metadata_variation`, `dependency_variation`, `environment_leakage`, `toolchain_variation`, `base_image_variation`, `platform_variation`, `generated_content`, `external_input_variation`) with confounder checks and an explicit `UNKNOWN_VARIATION` / `INCONCLUSIVE` safety fallback.
 - **Multi-Dimensional Reproducibility Vector + Secondary CRI:** Computes exact match, normalized match, content agreement, metadata agreement, environment consistency, and weighted Composite Reproducibility Index (`CRI`).
@@ -49,7 +50,7 @@ ReproForge/
 ├── alembic/                 # SQLite schema migrations
 ├── experiments/benchmarks/  # Section 10 10-scenario evaluation & outputs
 ├── scripts/                 # Portable launch scripts (Windows PowerShell & POSIX Bash)
-├── tests/                   # 103 pytest tests + 3 Rust supervisor integration tests
+├── tests/                   # 104 pytest tests + 3 Rust supervisor integration tests
 ├── start.ps1                # Root Windows PowerShell start script (Desktop GUI or -Api)
 ├── start.bat                # Root Windows CMD / double-click start script
 ├── start.sh                 # Root POSIX / Linux / macOS start script
@@ -109,7 +110,7 @@ pip install -r requirements.txt
 ## Verification & Empirical Benchmarks
 
 ### Automated Test Suites
-- **Python Suite:** `.\.venv\Scripts\pytest.exe -q` — `103 passed`
+- **Python Suite:** `.\.venv\Scripts\pytest.exe -q` — `104 passed`
 - **Desktop & IPC Supervisor Suite:** `cargo test --manifest-path desktop/Cargo.toml` — `3 passed` (Python discovery, live JSON-RPC handshake/ping, crash auto-restart)
 
 ### Section 10 Controlled Benchmark Suite (`experiments/benchmarks/repro_benchmark.py`)

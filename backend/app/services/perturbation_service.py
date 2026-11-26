@@ -209,7 +209,11 @@ class PerturbationService:
 
         buf = io.BytesIO()
         all_files = sorted(
-            [p for p in workspace.rglob("*") if p.is_file() and ".git" not in p.parts],
+            [
+                p
+                for p in workspace.rglob("*")
+                if p.is_file() and ".git" not in p.parts and ".venv" not in p.parts
+            ],
             key=lambda p: str(p.relative_to(workspace).as_posix()),
         )
         with tarfile.open(fileobj=buf, mode="w") as tf:

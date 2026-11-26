@@ -69,3 +69,34 @@ async def test_local_sandbox_timeout_handling(tmp_path: Path):
 
     assert result.status == BuildStatus.TIMED_OUT
     assert result.exit_code == 124
+
+
+@pytest.mark.asyncio
+async def test_local_sandbox_uses_repo_isolated_venv_not_host_venv(tmp_path: Path):
+    """Verify repo builds run strictly inside their own workspace .venv rather than ReproForge's .venv."""
+    import sys
+
+    source_dir = tmp_path / "repo_a" / "source"
+    source_dir.mkdir(parents=True, exist_ok=True)
+    out_file = source_dir / "venv_probe.txt"
+
+    runner = LocalSandboxBackend()
+    cmd = 'python -c "import os, shutil, sys; open(\'venv_probe.txt\', \'w\').write(sys.prefix + \'|\' + os.environ.get(\'VIRTUAL_ENV\', \'\') + \'|\' + (shutil.which(\'python\') or \'\'))"'
+
+    result = await runner.execute(
+        build_id="test-venv-isolation",
+        workspace_source_dir=source_dir,
+        build_command=cmd,
+        timeout_seconds=15,
+    )
+
+    assert result.status == BuildStatus.COMPLETED
+    expected_venv = (source_dir / ".venv").resolve()
+    assert expected_venv.exists()
+    assert result.metadata["venv_path"] == str(expected_venv)
+
+    probe_prefix, probe_env, probe_which = out_file.read_text(encoding="utf-8").split("|")
+    assert Path(probe_prefix).resolve() == expected_venv
+    assert Path(probe_env).resolve() == expected_venv
+    assert Path(probe_prefix).resolve() != Path(sys.prefix).resolve()
+    assert str(expected_venv).lower() in str(Path(probe_which).resolve()).lower()

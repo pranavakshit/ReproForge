@@ -149,7 +149,17 @@ class BuildService:
         # 4. Detect build configuration
         systems = self.detector.detect(repo_path)
         primary_cmd = systems[0].suggested_build_command if systems else "make"
-        build_cmd = custom_cmd or primary_cmd
+        if not custom_cmd and backend_type == "local" and primary_cmd == "python -m build":
+            # Ensure fresh per-repo .venv bootstraps build tooling or falls back cleanly to pip wheel
+            build_cmd = (
+                'python -c "import importlib.util, subprocess, sys; '
+                'has_b = importlib.util.find_spec(\'build\') is not None; '
+                'ok = has_b or subprocess.call([sys.executable, \'-m\', \'pip\', \'install\', \'--quiet\', \'--retries\', \'1\', \'--timeout\', \'5\', \'build\', \'wheel\']) == 0; '
+                'cmd = [sys.executable, \'-m\', \'build\'] if ok else [sys.executable, \'-m\', \'pip\', \'wheel\', \'--no-deps\', \'--no-build-isolation\', \'-w\', \'dist/\', \'.\']; '
+                'sys.exit(subprocess.call(cmd))"'
+            )
+        else:
+            build_cmd = custom_cmd or primary_cmd
 
         # 5. Allocate workspace & export clean source
         ws_path = self.workspace_manager.allocate_workspace(build_id)

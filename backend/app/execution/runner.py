@@ -3,6 +3,7 @@
 import asyncio
 import os
 import shutil
+import subprocess
 import sys
 import time
 from abc import ABC, abstractmethod
@@ -89,7 +90,88 @@ class BaseBuildBackend(ABC):
 
 
 class LocalSandboxBackend(BaseBuildBackend):
-    """Executes build commands in a local isolated workspace directory with strict timeouts."""
+    """Executes build commands in a local isolated workspace directory with a dedicated per-repo .venv."""
+
+    @staticmethod
+    def _resolve_base_python() -> str:
+        """Locate base Python outside ReproForge's own .venv to create clean isolated repo virtualenvs."""
+        base = Path(sys.base_prefix)
+        candidates = (
+            [base / "python.exe", base / "Scripts" / "python.exe"]
+            if os.name == "nt"
+            else [base / "bin" / "python3", base / "bin" / "python"]
+        )
+        for cand in candidates:
+            if cand.is_file():
+                return str(cand)
+        return sys.executable
+
+    @classmethod
+    def _ensure_workspace_venv(cls, workspace_source_dir: Path, include_pip: bool) -> tuple[Path, Path, Path]:
+        """Create (or reuse within the same build workspace) an isolated .venv for the target repo."""
+        venv_dir = (workspace_source_dir / ".venv").resolve()
+        venv_bin = venv_dir / ("Scripts" if os.name == "nt" else "bin")
+        venv_python = venv_bin / ("python.exe" if os.name == "nt" else "python")
+        if not venv_python.exists():
+            base_py = cls._resolve_base_python()
+            cmd = [base_py, "-m", "venv"]
+            if not include_pip:
+                cmd.append("--without-pip")
+            cmd.append(str(venv_dir))
+            subprocess.run(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=True,
+            )
+        return venv_dir, venv_bin, venv_python
+
+    @staticmethod
+    def _build_isolated_env(
+        venv_dir: Path,
+        venv_bin: Path,
+        env_vars: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, str]:
+        """Build allowlisted sandbox env pointing strictly to the repo's .venv (never ReproForge's .venv)."""
+        allowed_keys = {
+            "PATH", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "OS",
+            "TEMP", "TMP", "HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH",
+            "APPDATA", "LOCALAPPDATA", "LANG", "LC_ALL", "TZ",
+            "CARGO_HOME", "RUSTUP_HOME", "GOPATH", "GOROOT",
+            "NPM_CONFIG_CACHE", "SOURCE_DATE_EPOCH", "PYTHONHASHSEED",
+            "DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH",
+        }
+        clean_env = {k: v for k, v in os.environ.items() if k.upper() in allowed_keys}
+
+        # Strip ReproForge's own active virtualenv directory from inherited PATH
+        host_venv_prefix = str(Path(sys.prefix).resolve()).lower()
+        host_venv_env = os.environ.get("VIRTUAL_ENV", "").strip()
+        host_venv_norm = str(Path(host_venv_env).resolve()).lower() if host_venv_env else ""
+        path_key = "Path" if ("Path" in clean_env and "PATH" not in clean_env) else "PATH"
+        raw_path = clean_env.get(path_key, "")
+        filtered_paths = []
+        for entry in raw_path.split(os.pathsep):
+            if not entry:
+                continue
+            low = entry.lower()
+            if (host_venv_prefix != str(Path(sys.base_prefix).resolve()).lower() and host_venv_prefix in low) or (
+                host_venv_norm and host_venv_norm in low
+            ):
+                continue
+            filtered_paths.append(entry)
+
+        clean_env.pop("Path", None)
+        clean_env["PATH"] = os.pathsep.join([str(venv_bin), *filtered_paths])
+        clean_env["VIRTUAL_ENV"] = str(venv_dir)
+        clean_env["PIP_DISABLE_PIP_VERSION_CHECK"] = "1"
+
+        if env_vars:
+            for k, v in env_vars.items():
+                if k.upper() in {"VIRTUAL_ENV", "PYTHONPATH", "PYTHONHOME"}:
+                    continue
+                clean_env[k] = v
+        return clean_env
 
     async def execute(
         self,
@@ -102,22 +184,24 @@ class LocalSandboxBackend(BaseBuildBackend):
     ) -> BuildExecutionResult:
         log_file = workspace_source_dir.parent / f"{build_id}.log"
         started_at = datetime.now(timezone.utc)
+
+        needs_pip = any(
+            (workspace_source_dir / marker).exists()
+            for marker in ("pyproject.toml", "setup.py", "requirements.txt", "Pipfile", "poetry.lock")
+        ) or any(tok in build_command.lower() for tok in ("pip", " -m build", "pytest"))
+
+        venv_dir, venv_bin, venv_python = await asyncio.to_thread(
+            self._ensure_workspace_venv,
+            workspace_source_dir,
+            needs_pip,
+        )
+        clean_env = self._build_isolated_env(venv_dir, venv_bin, env_vars)
         start_time = time.monotonic()
 
-        # Construct sanitized allowlisted environment (do not leak arbitrary host secrets into build sandbox)
-        allowed_keys = {
-            "PATH", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "OS",
-            "TEMP", "TMP", "HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH",
-            "APPDATA", "LOCALAPPDATA", "LANG", "LC_ALL", "TZ",
-            "VIRTUAL_ENV", "PYTHONPATH", "PYTHONHOME", "CARGO_HOME", "RUSTUP_HOME",
-            "GOPATH", "GOROOT", "NPM_CONFIG_CACHE", "SOURCE_DATE_EPOCH", "PYTHONHASHSEED",
-            "DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH",
-        }
-        clean_env = {k: v for k, v in os.environ.items() if k.upper() in allowed_keys}
-        if env_vars:
-            clean_env.update(env_vars)
-
-        logger.info(f"[{build_id}] Starting local sandbox build (allowlisted host env): '{build_command}' in {workspace_source_dir}")
+        logger.info(
+            f"[{build_id}] Starting local sandbox build in isolated repo .venv ({venv_dir}): "
+            f"'{build_command}' in {workspace_source_dir}"
+        )
 
         status = BuildStatus.BUILDING
         exit_code = -1
@@ -129,7 +213,8 @@ class LocalSandboxBackend(BaseBuildBackend):
             header = (
                 f"=== ReproForge Build Log: {build_id} ===\n"
                 f"Timestamp: {started_at.isoformat()}\n"
-                f"Isolation: Host Sandbox (Env Allowlisted — not OS container isolated)\n"
+                f"Isolation: Host Sandbox + Repo-Isolated .venv ({venv_dir})\n"
+                f"Python: {venv_python}\n"
                 f"Command: {build_command}\n"
                 f"Working Directory: {workspace_source_dir}\n"
                 f"=========================================\n\n"
@@ -224,7 +309,12 @@ class LocalSandboxBackend(BaseBuildBackend):
             duration_seconds=duration,
             log_file_path=str(log_file),
             error_message=error_msg,
-            metadata={"command": build_command, "isolation_tier": "host_sandbox_allowlist"},
+            metadata={
+                "command": build_command,
+                "isolation_tier": "host_sandbox_venv_isolated",
+                "venv_path": str(venv_dir),
+                "venv_python": str(venv_python),
+            },
         )
 
 
