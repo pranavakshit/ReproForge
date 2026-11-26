@@ -29,9 +29,9 @@ skinparam database {
 actor "Developer / Researcher" as User
 
 package "Native Desktop Shell (desktop/)" {
-  [Slint Obsidian UI\n(9 Vector Views + ListView)] as SlintUI
+  [Slint Obsidian UI\n(9 Vector Views + ListView\n+ Full CLI Parity)] as SlintUI
   [Native OS Folder Picker\n& Workspace Checklist (rfd)] as FolderPicker
-  [Rust App State & Batched Logs\n(desktop/src/main.rs)] as RustApp
+  [Rust App State & Per-Build Logs\n(desktop/src/main.rs)] as RustApp
   [ProcessSupervisor Watchdog\n& Crash Auto-Restart] as Watchdog
   [Stdio JSON-RPC Client] as IpcClient
 }
@@ -46,14 +46,14 @@ package "Entry Adapters (Python)" {
 package "Shared Application Services (backend/app/services/)" {
   [OverviewService] as SvcOverview
   [RepositoryService] as SvcRepo
-  [BuildService] as SvcBuild
+  [BuildService\n(Full Deps / Source-Only)] as SvcBuild
   [ComparisonService] as SvcComp
   [FingerprintService] as SvcFp
-  [CausalityGraphService] as SvcGraph
-  [PerturbationService] as SvcPerturb
+  [CausalityGraphService\n(Incident Filter + EVIDENCED_BY)] as SvcGraph
+  [PerturbationService\n(Asia/Kolkata + Editable Matrix)] as SvcPerturb
   [PassportService\n(v1.0 Schema + Redaction)] as SvcPassport
   [RemediationEngine\n(3-Tier Disposable Verify)] as SvcRemediation
-  [ReportExporter\n(JSON / CSV / HTML)] as Reporting
+  [ReportExporter\n(UI & API JSON / CSV / HTML)] as Reporting
 }
 
 package "Orchestration, Execution & Fingerprinting" {
@@ -62,7 +62,7 @@ package "Orchestration, Execution & Fingerprinting" {
   [GitHubAutoScanner\n(Static + Read-Only Metadata)] as GhScanner
   [EnvironmentFingerprintEngine] as FpEngine
   [LocalSandboxBackend\n(Allowlisted Env + Per-Repo .venv)] as LocalSandbox
-  [DockerBuildBackend\n(--network=none + Resource Caps)] as DockerBackend
+  [DockerBuildBackend\n(--network=none + Wheelhouse\n+ Logs Before Cleanup)] as DockerBackend
   [WorkspaceManager & ArtifactCollector] as Collector
 }
 
@@ -75,7 +75,7 @@ package "Normalization, Diagnostics & Scoring" {
 }
 
 database "SQLite WAL + Alembic\n(data/reproforge.db)" as Db
-database "Artifacts, Passports &\nDisposable Workspaces" as ArtifactStore
+database "Artifacts, Passports, Wheelhouses\n& Disposable Workspaces" as ArtifactStore
 cloud "GitHub Read-Only API\n& git ls-remote" as GitHubCloud
 package "Benchmarks (experiments/benchmarks/)" {
   [10-Scenario §10 Suite &\nSlint Footprint Harness] as BenchSuite
@@ -92,6 +92,7 @@ Watchdog -[#14B8A6]-> IpcClient : manages channel
 IpcClient -[#F97316]-> IpcDaemon : JSON-RPC stdio
 Cli -[#84CC16]-> SvcBuild : direct calls
 Cli -[#EAB308]-> SvcRepo : repo add / scan
+Cli -[#EF4444]-> SvcComp : compare_paths / export
 HeadlessApi -[#6366F1]-> SvcOverview : optional REST
 HeadlessApi -[#A855F7]-> SvcComp : export & query
 
@@ -125,6 +126,7 @@ SvcPassport -[#2563EB]-> SvcPerturb : attach evidence
 SvcGraph -[#7C3AED]-> Db : query causal links
 SvcOverview -[#059669]-> Db : aggregate metrics
 Collector -[#DB2777]-> ArtifactStore : store outputs & logs
+DockerBackend -[#BE185D]-> ArtifactStore : offline wheelhouse cache
 BenchSuite -[#EA580C]-> DiffEngine : §10 benchmark evaluation
 
 @enduml

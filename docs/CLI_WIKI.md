@@ -21,7 +21,7 @@
 6. [Environment Variables & Data Paths (`Settings`)](#6-environment-variables--data-paths-settings)
 7. [End-to-End CLI Recipes](#7-end-to-end-cli-recipes)
 8. [Test & Benchmark Commands](#8-test--benchmark-commands)
-9. [Current CLI vs. Desktop UI Feature Differences](#9-current-cli-vs-desktop-ui-feature-differences)
+9. [CLI & Desktop UI Feature Parity](#9-cli--desktop-ui-feature-parity)
 
 ---
 
@@ -342,8 +342,14 @@ Defined in `backend/app/core/config.py` (supports `.env` in repository root or s
 
 ---
 
-## 9. Current CLI vs. Desktop UI Feature Differences
+## 9. CLI & Desktop UI Feature Parity
 
-- **CLI currently exposes directly:** arbitrary file/folder comparison (`reproforge compare <a1> <a2>`), explicit `--command` / `--timeout` overrides on builds, standalone `fingerprint --json-out`, and detailed lockfile/dependency counts in `detect`.
-- **Desktop UI currently exposes directly (beyond CLI):** visual 9-screen workflow, **Build Drift Causality Graph** viewer & `.dot` export, **Perturbation Lab** single-variable campaigns, **Passport v1.0** viewer & JSON/Markdown export, **3-Tier Remediation** approval cockpit, 1-click **Verify Reproducibility (2x + Compare)**, and live log streaming.
-- **Headless REST API (`-Api`)** bridges campaign execution, remediation approval, causality graphs, passports, and HTML/CSV/JSON report exports for CI scripts without launching the GUI.
+The ReproForge Rust + Slint Desktop Studio and the `reproforge` CLI expose unified core capabilities:
+
+- **Full Parity Across CLI & Desktop UI:**
+  - **Custom Build Overrides & Dependency Modes:** Both CLI (`--command`, `--timeout`) and Desktop **Builds & Logs** support custom build commands, configurable timeouts, `local` vs `docker` isolation, and Option A cached offline Docker wheelhouses (`Full` default or `Source-Only`).
+  - **Arbitrary File/Folder Comparison & Report Export:** Both `reproforge compare <a1> <a2>` and **Diff & Diagnostics** support arbitrary path comparisons (`comparison.compare_paths`) plus direct JSON/CSV/HTML report exports.
+  - **Extended Build Config Detection:** Both `reproforge detect` and **Repositories** surface `primary_config`, `lockfile_path`, `declared_deps`, and `suggested_cmd`.
+  - **Host Fingerprint Inspection:** Both `reproforge fingerprint --json-out` and **Settings** expose on-demand SHA-256 host fingerprint snapshots and secret-filtered JSON output.
+- **Desktop Studio Visual Workbench Capabilities:** Visual 9-screen workflow, latest-first build ledger, per-build log stream isolation (`Follow Live Build`), interactive **Build Drift Causality Graph** node filtering & `EVIDENCED_BY` links, interactive **Perturbation Lab** (`Asia/Kolkata` preset, inline toggles, editable baseline/perturbed fields, Full Builder mode), **Passport v1.0** viewer, and **3-Tier Remediation** cockpit.
+- **Headless REST API (`-Api`)** mirrors automation workflows (campaigns, remediation approval, causality graphs, passports, and HTML/CSV/JSON report exports) over HTTP.
